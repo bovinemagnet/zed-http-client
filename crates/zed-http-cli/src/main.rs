@@ -34,14 +34,15 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use cookie_store::CookieStore;
 use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
     build_preview, cookie_jar_path, evaluate_assertions, evaluate_captures, format_pretty_response,
-    format_request_file, import_curl, import_postman_collection, introspection_payload,
+    format_request_file, import_curl, import_har, import_postman_collection, introspection_payload,
     list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
     prepare_request_with_extras, response_root, save_response, schema_root, schema_slug,
     validate_request_file_with_schemas, validate_request_with_schema, AssertionResponse,
@@ -160,6 +161,12 @@ enum Commands {
         #[command(subcommand)]
         command: ImportCommand,
     },
+    /// Generate shell completion scripts for bash/zsh/fish/powershell/elvish.
+    Completions {
+        /// Target shell.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -169,6 +176,19 @@ enum ImportCommand {
         file: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    Har {
+        /// Path to the HAR 1.2 archive (Chrome/Firefox/Safari "Save all
+        /// as HAR with content" output).
+        #[arg(long)]
+        file: PathBuf,
+        /// Write the resulting .http content here. Defaults to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Prepend each imported request's name with this prefix, e.g.
+        /// `--name-prefix "Smoke"` produces `Smoke / 1: GET /api/users`.
+        #[arg(long)]
+        name_prefix: Option<String>,
     },
     Curl {
         /// Inline curl command, e.g. `'curl https://example.com'`.
@@ -276,6 +296,7 @@ async fn main() -> Result<()> {
         }
         Commands::Schema { command } => schema_command(command),
         Commands::Import { command } => import_command(command),
+        Commands::Completions { shell } => completions_command(shell),
         Commands::List { file } => list_command(&file),
         Commands::Envs { file, worktree } => envs_command(&file, worktree.as_deref()),
         Commands::Format {
@@ -437,6 +458,23 @@ fn import_command(command: ImportCommand) -> Result<()> {
                 &file.display().to_string(),
             )
         }
+        ImportCommand::Har {
+            file,
+            out,
+            name_prefix,
+        } => {
+            let raw = fs::read_to_string(&file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+            let request_file = import_har(&raw, name_prefix.as_deref())
+                .with_context(|| format!("failed to import {}", file.display()))?;
+            let rendered = format_request_file(&request_file);
+            emit_import_output(
+                out.as_deref(),
+                &rendered,
+                request_file.requests.len(),
+                &file.display().to_string(),
+            )
+        }
         ImportCommand::Curl {
             command,
             file,
@@ -478,6 +516,13 @@ fn import_command(command: ImportCommand) -> Result<()> {
             )
         }
     }
+}
+
+fn completions_command(shell: Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
+    Ok(())
 }
 
 fn emit_import_output(

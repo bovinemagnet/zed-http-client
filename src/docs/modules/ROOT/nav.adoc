@@ -21,6 +21,7 @@
 .Migration
 * xref:postman-import.adoc[Postman collection import]
 * xref:curl-import.adoc[curl command import]
+* xref:har-import.adoc[HAR archive import]
 
 .Editor integration
 * xref:zed-integration.adoc[Running from Zed]

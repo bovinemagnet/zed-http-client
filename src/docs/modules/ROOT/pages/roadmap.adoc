@@ -60,20 +60,35 @@ _Shipped in releases 0.4.0 and 0.4.1._
 
 === v0.4.x — quality of life
 
-_Shipped in releases 0.4.1, 0.4.2, and 0.4.4._
+_Shipped in releases 0.4.1, 0.4.2, 0.4.4, and 0.4.5._
 
 * [x] `# @env` file-level directive (0.4.1) — see above
 * [x] Module-level documentation across the workspace (0.4.1) — every Rust source file carries a doc comment summarising its purpose
 * [x] xref:directives.adoc#dynamic-variables[Dynamic variables] (0.4.2) — `$uuid` (UUID v7), `$timestamp`, `$isoTimestamp`, `$randomInt`; user variables of the same name shadow the dynamic value for deterministic testing
 * [x] xref:cli-reference.adoc#run-all[`zed-http run-all`] (0.4.2) — executes every request in declaration order with a per-request `✓`/`✗` status line, a pass/failed/skipped summary, `--bail` support, and a shared cookie jar across all iterations
 * [x] xref:captures.adoc[Response variable capture] (0.4.4) — `# @capture <variable> json:<pointer>|header:<name>|status` lifts values out of each response into the variable map; `--var name=value` (repeatable) seeds the map from the CLI; sensitive keys masked in output; unresolvable captures warn rather than fail
+* [x] xref:har-import.adoc[HAR archive import] (0.4.5) — `zed-http import har --file <path>` translates a browser "Save all as HAR with content" export into a multi-request `.http` file; closes the import-source trio (Postman + curl + HAR)
+* [x] xref:cli-reference.adoc#completions[Shell completions] (0.4.5) — `zed-http completions <shell>` emits a clap-generated completion script for bash, zsh, fish, powershell, or elvish
 
 [[deferred]]
 == Deferred
 
 The v0.4 PRD tier is now substantially complete.
 The items that were listed in the PRD for v0.4 but not yet implemented are: multipart request bodies, JavaScript pre-/post-request scripts, OAuth flows, a custom Zed output pane, and the higher-fidelity capture extractions described below.
-All remain unscheduled.
+The import-source trio (Postman + curl + HAR) is now complete; the remaining import-related gaps are listed below.
+All deferred items remain unscheduled.
+
+=== Import — remaining gaps
+
+The three primary import sources (Postman, curl, HAR) are now fully shipped.
+What remains:
+
+* [ ] Gzipped HAR auto-decode — `.har.gz` files must currently be decompressed manually before import.
+  Transparent `gunzip` support is tracked for a future release.
+* [ ] OpenAPI / Swagger import — translating an OpenAPI 3.x or Swagger 2.0 spec into a skeleton `.http` file.
+  Not yet scoped.
+* [ ] Extended curl flag coverage — less common curl shapes (e.g. `--oauth2-bearer`, `--cert`, `--cacert`, form-encoded shorthand) are not yet recognised or translated.
+  The common devtools subset is complete.
 
 === Multipart / form-data request bodies
 

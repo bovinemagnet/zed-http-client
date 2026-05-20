@@ -127,6 +127,33 @@ Hyphen vs underscore in the grammar key::
   The Rust crate Zed expects is also `tree_sitter_http_request`.
   If you see the grammar registered but Tree-sitter fails to activate, a key mismatch is the most likely cause.
 
+== Shell completions
+
+Once `zed-http` is on your `PATH`, you can generate a tab-completion script for your shell using `zed-http completions <shell>`.
+The script is generated from the binary itself, so it always reflects the current CLI surface.
+
+Run the appropriate one-liner for your shell and restart your session (or source the file immediately):
+
+[source,bash]
+----
+# Bash
+zed-http completions bash | sudo tee /etc/bash_completion.d/zed-http
+
+# Zsh
+zed-http completions zsh | sudo tee /usr/local/share/zsh/site-functions/_zed-http
+
+# Fish
+zed-http completions fish > ~/.config/fish/completions/zed-http.fish
+
+# PowerShell
+zed-http completions powershell | Out-String | Invoke-Expression
+
+# Elvish
+zed-http completions elvish > ~/.elvish/lib/zed-http.elv
+----
+
+See xref:cli-reference.adoc#completions[zed-http completions] for per-shell installation paths and persistence instructions.
+
 == Next steps
 
 Once the extension and CLI are in place, follow xref:getting-started.adoc[] to send your first request and wire up environment files.

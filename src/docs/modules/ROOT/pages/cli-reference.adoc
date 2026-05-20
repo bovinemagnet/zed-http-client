@@ -23,7 +23,8 @@ zed-http <subcommand> --help
 * xref:#format[format] — re-emit a file in canonical layout
 * xref:#introspect[introspect] — run a GraphQL introspection query and cache the schema
 * xref:#schema[schema] — inspect cached schemas
-* xref:#import[import] — translate a Postman v2.1 collection or a curl command into a `.http` file
+* xref:#import[import] — translate a Postman v2.1 collection, a curl command, or a HAR archive into a `.http` file
+* xref:#completions[completions] — emit a shell completion script for bash, zsh, fish, powershell, or elvish
 
 ---
 
@@ -744,6 +745,74 @@ zed-http import postman --file exports/my-api.postman_collection.json \
 
 ---
 
+[[import-har]]
+=== zed-http import har
+
+==== Synopsis
+
+[source,bash]
+----
+zed-http import har --file <path>
+                    [--out <path>]
+                    [--name-prefix "<prefix>"]
+----
+
+==== Description
+
+Translates a HAR 1.2 archive — the JSON file produced by *Save all as HAR with content* in browser devtools — into a multi-request `.http` file.
+Each entry in `log.entries[]` becomes one canonical request block.
+
+`--file` is required; there is no inline or `--stdin` input mode in v0.4.5.
+Without `--out`, the result is written to stdout.
+When `--out` is given the parent directory is created automatically.
+
+Request names default to `<index>: <METHOD> <path-and-query>` so `zed-http list` output stays scannable.
+HTTP/2 pseudo-headers (`:authority`, `:method`, `:path`, `:scheme`, `:status`) are stripped automatically — they are an artefact of HTTP/2 captures and would cause errors when a request is replayed.
+`postData.text` becomes an inline body when present; `postData.mimeType` is preserved via the original `Content-Type` header.
+Multipart bodies (`postData.params`) are recognised but dropped with a `multipart body skipped` note appended to the request name.
+
+See xref:har-import.adoc[HAR archive import] for a step-by-step guide with worked examples.
+
+==== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The HAR 1.2 archive to import. Must be a UTF-8 JSON file; `.har.gz` is not auto-decoded.
+
+|`--out <path>`
+|path, optional
+|Write the resulting `.http` content to this path (parent directories are created). Defaults to stdout.
+
+|`--name-prefix "<prefix>"`
+|string, optional
+|Prepend this string to every imported request name, e.g. `--name-prefix "Smoke"` produces names like `Smoke / 1: GET /api/users`. The value is trimmed; an all-whitespace prefix is treated as no prefix.
+|===
+
+==== Exit codes
+
+Non-zero when:
+
+* The file cannot be read.
+* The file is not valid JSON.
+* The top-level `/log/entries` array is absent (not a valid HAR 1.2 document).
+
+==== Example
+
+[source,bash]
+----
+# Import to a file
+zed-http import har --file session.har --out smoke/session.http
+
+# Import with a name prefix, preview on stdout
+zed-http import har --file checkout.har --name-prefix "Checkout flow"
+----
+
+---
+
 [[import-curl]]
 === zed-http import curl
 
@@ -856,6 +925,113 @@ content-type: application/json
 
 {"item":"widget","qty":3}
 ----
+
+---
+
+[[completions]]
+== zed-http completions
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http completions {bash|zsh|fish|powershell|elvish}
+----
+
+=== Description
+
+Emits a clap-generated shell completion script for the chosen shell to stdout.
+Redirect the output to your shell's completion directory once; subsequent tab completions will offer all `zed-http` subcommand names, flag names, and value enum variants (such as `pretty`, `json`, `raw` for `--output`).
+
+Because the script is generated from the same clap definition that drives the binary, it stays in sync with the CLI surface automatically — re-run the command after upgrading to capture any new subcommands or flags.
+
+This is a one-shot generator, not a persistent shell hook.
+You run it once per install (or once per upgrade) and redirect the output to a file; the shell sources that file on startup.
+
+=== Arguments
+
+[cols="2,1,4", options="header"]
+|===
+|Argument |Values |Description
+
+|`<SHELL>`
+|`bash` \| `zsh` \| `fish` \| `powershell` \| `elvish`
+|The target shell. The generated script format differs per shell; passing the wrong shell name will produce a script that cannot be sourced by your actual shell.
+|===
+
+=== Examples
+
+==== Bash
+
+[source,bash]
+----
+zed-http completions bash | sudo tee /etc/bash_completion.d/zed-http
+----
+
+On systems without a system-wide completions directory, or when you do not have `sudo` access, install to your home directory instead:
+
+[source,bash]
+----
+mkdir -p ~/.local/share/bash-completion/completions
+zed-http completions bash > ~/.local/share/bash-completion/completions/zed-http
+----
+
+==== Zsh
+
+[source,bash]
+----
+zed-http completions zsh | sudo tee /usr/local/share/zsh/site-functions/_zed-http
+----
+
+Ensure the site-functions directory is on your `$fpath`.
+If you use a user-local completions directory (e.g. with `oh-my-zsh` or a custom `$fpath` entry):
+
+[source,bash]
+----
+zed-http completions zsh > ~/.zsh/completions/_zed-http
+----
+
+==== Fish
+
+[source,bash]
+----
+zed-http completions fish > ~/.config/fish/completions/zed-http.fish
+----
+
+Fish loads completions from `~/.config/fish/completions/` automatically; no further configuration is needed.
+
+==== PowerShell
+
+[source,powershell]
+----
+zed-http completions powershell | Out-String | Invoke-Expression
+----
+
+To make completions persist across sessions, append the generated script to your PowerShell profile:
+
+[source,powershell]
+----
+zed-http completions powershell >> $PROFILE
+----
+
+==== Elvish
+
+[source,bash]
+----
+zed-http completions elvish > ~/.elvish/lib/zed-http.elv
+----
+
+Then add the following line to `~/.elvish/rc.elv`:
+
+[source,elvish]
+----
+use zed-http
+----
+
+=== Exit codes
+
+Always exits `0`.
+The shell argument is validated by clap at parse time; an invalid value produces a usage error before the command runs.
 
 ---
 

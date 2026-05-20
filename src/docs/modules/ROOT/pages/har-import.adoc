@@ -1,0 +1,276 @@
+= HAR Archive Import
+:description: Translating a browser "Save all as HAR with content" export into a multi-request .http file with zed-http import har.
+
+`zed-http import har` translates an HTTP Archive (HAR 1.2) export — the JSON file browsers emit when you choose *Save all as HAR with content* in the network panel — into a multi-request `.http` file.
+It is the bulk equivalent of xref:curl-import.adoc[curl command import]: where curl import converts a single copied request, HAR import converts an entire captured session in one step.
+
+For importing a Postman collection, see xref:postman-import.adoc[Postman collection import].
+
+== Capturing a HAR file
+
+All major browsers export HAR from the network panel of their developer tools.
+
+*Chrome / Edge*:: Open DevTools (`F12`), go to the *Network* tab, reproduce the session, then right-click any request and choose *Save all as HAR with content*.
+
+*Firefox*:: Open DevTools, go to the *Network* tab, reproduce the session, then click the *Export HAR* floppy-disk icon in the toolbar.
+
+*Safari*:: Open the Web Inspector (*Develop > Show Web Inspector*), go to the *Network* tab, reproduce the session, then choose *Export* from the toolbar.
+
+The resulting file is a UTF-8 JSON document.
+The standard extension is `.har`.
+
+[#input]
+== Input
+
+[source,bash]
+----
+zed-http import har --file <path>
+                    [--out <path>]
+                    [--name-prefix "<prefix>"]
+----
+
+`--file <path>` is required.
+HAR archives are too large for inline command-line arguments and there is no `--stdin` mode in v0.4.5.
+
+The file must be a valid HAR 1.2 JSON document — the top-level shape is `{ "log": { "entries": [ ... ] } }`.
+If the file cannot be parsed as JSON, or if the `/log/entries` array is absent, the command exits with a diagnostic message:
+
+----
+HAR JSON parse error: …
+HAR file missing /log/entries — is this a valid HAR 1.2 archive?
+----
+
+[NOTE]
+====
+Gzipped HAR (`.har.gz`) is not auto-decoded in v0.4.5.
+Decompress the file first, then import:
+
+[source,bash]
+----
+gunzip session.har.gz
+zed-http import har --file session.har --out session.http
+----
+====
+
+== Output
+
+Without `--out`, the resulting `.http` content is printed to stdout.
+Use `--out <path>` to write directly to a file; the parent directory is created automatically if it does not exist:
+
+[source,bash]
+----
+zed-http import har --file session.har --out smoke/session.http
+----
+
+A confirmation line is printed to stderr:
+
+----
+Imported 12 request(s) from session.har → smoke/session.http
+----
+
+== Request naming
+
+Each imported request is named automatically using the pattern:
+
+----
+<index>: <METHOD> <path-and-query>
+----
+
+The scheme and host are stripped so that `zed-http list` output stays scannable:
+
+----
+1. 1: GET /api/users?page=1    GET      line 1
+2. 2: POST /api/orders         POST     line 7
+3. 3: GET /api/orders/9f2e     GET      line 14
+----
+
+=== `--name-prefix`
+
+Prepend a label to every request name to group the imported requests within a larger file:
+
+[source,bash]
+----
+zed-http import har --file checkout.har --name-prefix "Checkout flow"
+----
+
+Produces names such as:
+
+----
+Checkout flow / 1: GET /api/cart
+Checkout flow / 2: POST /api/orders
+Checkout flow / 3: GET /api/orders/9f2e
+----
+
+The prefix value is `.trim()`ed; an all-whitespace string is treated as no prefix.
+
+== What gets imported per entry
+
+For each entry in `log.entries[]`, the importer reads the `entry.request` object and produces one `RequestBlock`.
+
+Method and URL::
+  The `method` field and the full `url` (including any query string) are preserved verbatim.
+
+Headers::
+  All header name/value pairs from `headers[]` are carried over — _except_ HTTP/2 pseudo-headers (see below).
+
+Body::
+  `postData.text` becomes an inline request body when present and non-empty.
+  The `Content-Type` is preserved because the original request's `Content-Type` header comes over with the other headers — no separate mapping is needed.
+
+=== HTTP/2 pseudo-header stripping
+
+Browsers that capture HTTP/2 traffic include pseudo-headers in the HAR output.
+These have names that start with a colon and have no meaning in a replayed HTTP request:
+
+* `:authority`
+* `:method`
+* `:path`
+* `:scheme`
+* `:status`
+
+The importer strips all five automatically.
+Without this step, `reqwest` would reject the replayed request with confusing header-name errors.
+
+=== Cookies
+
+Cookies that the browser sent appear in the HAR headers as a normal `Cookie: …` header and come over unchanged.
+HAR's separate `cookies[]` array is informational and is not imported.
+
+=== Request timing and response data
+
+HAR entries also contain `timings` and `response` objects.
+These are not imported — `zed-http` captures its own timing when running requests, and response data from a prior session has no replay value.
+
+== Limitations
+
+=== Multipart request bodies
+
+When `postData.mimeType` starts with `multipart/`, the body is dropped and a note is appended to the request name:
+
+----
+1: POST /api/upload — multipart body skipped
+----
+
+The import itself succeeds; only the body content is absent.
+Full multipart rendering is deferred — see xref:roadmap.adoc[Roadmap and limitations] for the current status.
+
+=== Gzipped HAR
+
+`.har.gz` files are not automatically decompressed.
+Pipe through `gunzip` before importing (see xref:#input[Input]).
+
+== Worked example
+
+Consider a HAR file with three entries: a GET with HTTP/2 pseudo-headers, a POST with a JSON body, and a multipart upload.
+
+.Abbreviated HAR input (`session.har`)
+[source,json]
+----
+{
+  "log": {
+    "version": "1.2",
+    "entries": [
+      {
+        "request": {
+          "method": "GET",
+          "url": "https://api.example.com/users?page=1",
+          "headers": [
+            { "name": ":authority", "value": "api.example.com" },
+            { "name": ":method",    "value": "GET" },
+            { "name": ":path",      "value": "/users?page=1" },
+            { "name": ":scheme",    "value": "https" },
+            { "name": "Accept",     "value": "application/json" }
+          ]
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "url": "https://api.example.com/orders",
+          "headers": [
+            { "name": "Content-Type", "value": "application/json" }
+          ],
+          "postData": {
+            "mimeType": "application/json",
+            "text": "{\"item\":\"widget\",\"qty\":3}"
+          }
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "url": "https://api.example.com/upload",
+          "headers": [],
+          "postData": {
+            "mimeType": "multipart/form-data; boundary=----X",
+            "params": [{ "name": "file", "fileName": "report.pdf" }]
+          }
+        }
+      }
+    ]
+  }
+}
+----
+
+[source,bash]
+----
+zed-http import har --file session.har --out requests.http
+----
+
+.Output (`requests.http`)
+[source,asciidoc]
+----
+### 1: GET /users?page=1
+GET https://api.example.com/users?page=1
+Accept: application/json
+
+###
+
+### 2: POST /orders
+POST https://api.example.com/orders
+Content-Type: application/json
+
+{"item":"widget","qty":3}
+
+###
+
+### 3: POST /upload — multipart body skipped
+POST https://api.example.com/upload
+
+###
+----
+
+Notice that the four HTTP/2 pseudo-headers were stripped from the first request, the JSON body was preserved for the second, and the third carries a note in its name — with no body.
+
+Verify the imported file with `zed-http list`:
+
+[source,bash]
+----
+zed-http list --file requests.http
+----
+
+----
+1. 1: GET /users?page=1                GET      line 1
+2. 2: POST /orders                     POST     line 6
+3. 3: POST /upload — multipart body skipped  POST  line 13
+----
+
+== Composing with `run-all`
+
+An imported HAR file is exactly the shape `zed-http run-all` expects — each captured request becomes one entry in a smoke-test suite.
+Add `# @expect-status` and `# @expect-header` directives after import and replay the entire session as a regression check:
+
+[source,bash]
+----
+# 1. Import yesterday's production session
+zed-http import har --file session.har --name-prefix "Smoke" --out smoke.http
+
+# 2. Open smoke.http and annotate critical requests, for example:
+#    # @expect-status 200
+#    # @expect-header content-type application/json
+
+# 3. Replay against staging
+zed-http run-all --file smoke.http --env staging
+----
+
+See xref:cli-reference.adoc#run-all[zed-http run-all] for the complete flag reference and xref:assertions.adoc[Response assertions] for the full list of `# @expect-*` directives.

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-05-20
+
+Closes the import-source trio (Postman + curl + HAR) and adds shell
+completions so the CLI plays well with `cd`/tab muscle memory.
+
+### Added
+
+- `zed-http import har --file <path> [--out <path>] [--name-prefix <prefix>]`
+  translates an HTTP Archive (HAR 1.2) export — the JSON shape browsers
+  emit for "Save all as HAR with content" — into a multi-request `.http`
+  file. Each `log.entries[].request` becomes one canonical request block.
+  Default name shape is `<index>: <METHOD> <path>`; `--name-prefix
+  "Smoke"` produces `Smoke / 1: GET /users` etc.
+- HAR importer behaviour:
+  - URLs keep their query strings.
+  - HTTP/2 pseudo-headers (`:authority`, `:method`, `:path`, `:scheme`,
+    `:status`) are stripped — they have no meaning when replayed.
+  - `postData.text` becomes an inline body when present.
+  - Multipart `postData.params` is recognised but the body is dropped
+    with a `multipart body skipped` note in the request name, matching
+    the curl importer's behaviour.
+- `zed-http completions <shell>` emits clap-generated completion scripts
+  for `bash`, `zsh`, `fish`, `powershell`, or `elvish`. Pipe into your
+  shell's completion directory or `eval` it for interactive use:
+  - `zed-http completions bash | sudo tee /etc/bash_completion.d/zed-http`
+  - `zed-http completions zsh | sudo tee /usr/local/share/zsh/site-functions/_zed-http`
+  - `zed-http completions fish > ~/.config/fish/completions/zed-http.fish`
+- Public core API: `import_har` (in new `har` module), re-exported at
+  the crate root.
+
+### Diagnostics
+
+- HAR import errors as `HAR file missing /log/entries — is this a valid
+  HAR 1.2 archive?` when the input has the wrong top-level shape.
+- Invalid HAR JSON errors with the underlying serde_json message.
+
 ## [0.4.4] - 2026-05-20
 
 Closes the response-capture gap that has been sitting next to `run-all`

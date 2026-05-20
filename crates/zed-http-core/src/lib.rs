@@ -38,6 +38,9 @@
 //!   [`model::RequestFile`] for use with the formatter.
 //! - [`curl`] — translates a `curl` command (the "Copy as cURL" shape
 //!   from browser devtools) into a single-request [`model::RequestFile`].
+//! - [`har`] — translates an HTTP Archive (HAR 1.2) export into a
+//!   multi-request [`model::RequestFile`]; the bulk equivalent of the
+//!   curl importer.
 //! - [`error`] — single [`error::HttpClientError`] type returned everywhere.
 
 pub mod assertion;
@@ -49,6 +52,7 @@ pub mod error;
 pub mod executor;
 pub mod format;
 pub mod graphql;
+pub mod har;
 pub mod interpolate;
 pub mod model;
 pub mod output;
@@ -72,6 +76,7 @@ pub use graphql::{
     build_graphql_payload, introspection_payload, parse_variable_definitions, render_graphql_json,
     render_graphql_json_with_extras, validate_variables, VariableDefinition, INTROSPECTION_QUERY,
 };
+pub use har::import_har;
 pub use interpolate::{interpolate_text, resolve_variables};
 pub use model::{
     CaptureDirective, CaptureSource, Header, InPlaceVariable, RequestBlock, RequestBody,
