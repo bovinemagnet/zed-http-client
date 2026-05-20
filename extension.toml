@@ -5,7 +5,8 @@ schema_version = 1
 authors = ["Paul Snow <bovinemagnet@gmail.com>"]
 description = "Run IntelliJ-compatible HTTP and GraphQL request files from Zed"
 repository = "https://github.com/bovinemagnet/zed-http-client"
+languages = ["languages/http-request"]
 
 [grammars.http-request]
 repository = "https://github.com/bovinemagnet/tree-sitter-http-request"
-rev = "REPLACE_WITH_COMMIT_SHA"
+rev = "35d96ed7a38d59ff6e889ba2c93b1fb42a16b8f0"

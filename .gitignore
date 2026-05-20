@@ -19,3 +19,6 @@ target
 http-client.private.env.json
 examples/http-client.private.env.json
 .zed-http/
+
+# Tree-sitter generated artefacts; the published grammar repo carries these.
+grammars/tree-sitter-http-request/src/
