@@ -1,3 +1,9 @@
+//! Single error type returned by every fallible operation in this crate.
+//!
+//! The CLI wraps these with `anyhow::Context` to attach the offending file
+//! path; the variants here carry the inner detail (line numbers, missing
+//! variable names, etc.).
+
 use std::io;
 
 use thiserror::Error;

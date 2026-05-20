@@ -305,6 +305,7 @@ The initial parser intentionally focuses on the most common primitives:
 - bodies sourced from a file using `< ./path.json`
 - response redirects using `>> ./path` (refuses to overwrite) and `>>! ./path` (force overwrite)
 - per-request options as `# @timeout <ms>`, `# @connection-timeout <ms>`, `# @no-redirect`
+- file-level `# @env <name>` directive that selects the environment when `--env` isn't passed
 - in-file variables like `@host = http://localhost:8080`
 - interpolation using `{{variableName}}`
 
@@ -370,6 +371,21 @@ Resolution order:
 2. overlay private values
 3. overlay in-file `@variables`
 4. apply future CLI overrides
+
+The environment is selected via `--env <name>`. If no flag is passed, the
+file may declare a default with `# @env <name>` at the top:
+
+```http
+# @env dev
+
+@localToken = local-token
+
+### Health check
+GET {{host}}/health
+```
+
+CLI flag wins over the directive. The directive lets one `.http` file
+travel with a sensible default that matches how the requests were written.
 
 Secret-looking keys are masked in verbose output for names containing `token`, `secret`, `password`, `apikey`, `api_key`, or `authorization`.
 

@@ -1,3 +1,22 @@
+//! Cached schema lookup and schema-aware GraphQL validation.
+//!
+//! `zed-http introspect` writes a schema to
+//! `<base>/.zed-http/schema/<host>.json`; this module is the read side of
+//! that cache. The slug derives from the request URL's host (with `:` and
+//! `/` flattened to `-`), so multiple requests against the same endpoint
+//! share one cached schema.
+//!
+//! [`validate_against_schema`] walks the *outermost* selection set of a
+//! GraphQL operation and reports field selections that aren't declared on
+//! the schema's root type for the operation kind. Inline-fragment and
+//! fragment-spread selections are intentionally skipped: validating them
+//! correctly requires resolving the type condition, which we don't do yet.
+//!
+//! The selection-set walker (`extract_top_level_fields`) is character-based
+//! with a small state machine — enough to handle aliases, arguments,
+//! `@directive(...)` clauses, and `#` comments, but not a full GraphQL
+//! grammar. Good enough for "schema knows this field name" checks.
+
 use std::{
     fs,
     path::{Path, PathBuf},

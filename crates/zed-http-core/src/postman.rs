@@ -1,3 +1,15 @@
+//! Postman v2.1 collection → [`RequestFile`] importer.
+//!
+//! Walks the recursive `item` tree, flattening nested folders into request
+//! names like `Folder / Sub-Folder / Request`. Handles `raw` and `graphql`
+//! body modes; `formdata`, `urlencoded`, `file`, and `binary` modes are
+//! skipped (we don't yet support those on the execution side). Collection
+//! variables are imported as in-file `@name = value` declarations so they
+//! travel with the resulting `.http` file.
+//!
+//! Postman's variable syntax (`{{var}}`) happens to match the format we
+//! already use, so URLs and headers pass through unchanged.
+
 use serde_json::Value;
 
 use crate::{
@@ -39,6 +51,7 @@ pub fn import_collection(input: &str) -> Result<RequestFile, HttpClientError> {
     };
 
     Ok(RequestFile {
+        default_env: None,
         variables,
         requests,
     })

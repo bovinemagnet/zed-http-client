@@ -1,3 +1,18 @@
+//! GraphQL body handling: splitting query from variables, deriving the
+//! operation name, parsing variable definitions, and producing the
+//! canonical `{query, variables, operationName}` JSON payload.
+//!
+//! Also hosts the standard introspection query used by
+//! `zed-http introspect` — kept here so it lives next to the renderer and
+//! never falls out of sync with what we know about GraphQL bodies.
+//!
+//! `parse_variable_definitions` is intentionally a tiny single-purpose
+//! parser, not a full GraphQL grammar — it extracts just the
+//! `($id: ID!, $limit: Int = 10)` block so the validator can flag
+//! required-but-missing or extra entries against the JSON variables
+//! object. Anonymous operations (`query { ... }`) and the three operation
+//! kinds are all supported.
+
 use regex::Regex;
 use serde_json::{json, Map, Value};
 

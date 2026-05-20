@@ -1,3 +1,17 @@
+//! Response persistence, pretty terminal output, and the conventional
+//! `<base>/.zed-http/` artefact directory.
+//!
+//! Every `zed-http run` saves the full response body to
+//! `<base>/.zed-http/responses/<timestamp>-<slug>.<ext>` so the user can
+//! re-inspect later from the terminal-clickable path. The extension is
+//! inferred from the response `Content-Type`; the slug comes from the
+//! request name, falling back to the HTTP method.
+//!
+//! The same base directory hosts the schema cache
+//! (`<base>/.zed-http/schema/<host>.json`) and the cookie jar
+//! (`<base>/.zed-http/cookies.json`), kept together so a user can wipe
+//! all extension state with one `rm -rf`.
+
 use std::{
     fs,
     path::{Path, PathBuf},

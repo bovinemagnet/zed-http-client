@@ -1,9 +1,20 @@
+//! Typed AST produced by the parser and consumed by everything else.
+//!
+//! The shapes here intentionally mirror what the parser can produce from a
+//! `.http` file, with one twist: GraphQL is represented as its own
+//! [`RequestMethod::GraphQl`] variant rather than collapsing it into POST,
+//! so that downstream code (validator, executor, formatter) can recognise
+//! GraphQL semantics. `RequestMethod::http_method()` does the POST mapping
+//! when the executor needs the wire-level verb.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestFile {
+    #[serde(default)]
+    pub default_env: Option<String>,
     pub variables: Vec<InPlaceVariable>,
     pub requests: Vec<RequestBlock>,
 }

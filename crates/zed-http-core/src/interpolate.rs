@@ -1,3 +1,19 @@
+//! `{{name}}` substitution into request URLs, headers, bodies, and option
+//! values.
+//!
+//! Two entry points:
+//!
+//! - [`resolve_variables`] runs first against the variable map so values can
+//!   reference other variables (e.g. `baseUrl = {{host}}/api`). Missing
+//!   references inside a value are left as the literal `{{...}}` text — we
+//!   don't want a typo in one private value to cascade into a hard failure
+//!   for unrelated requests. The pass is repeated up to `values.len()` times
+//!   so chains of indirection eventually settle.
+//! - [`interpolate_text`] then runs against the resolved map for the URL,
+//!   each header, the body, the response-redirect path, etc. Missing
+//!   references at this stage *are* hard errors because they would otherwise
+//!   send the literal text "{{token}}" to the server.
+
 use indexmap::IndexMap;
 use regex::Regex;
 

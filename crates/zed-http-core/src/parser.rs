@@ -1,3 +1,21 @@
+//! Hand-rolled parser from a `.http` file body to a [`RequestFile`].
+//!
+//! IntelliJ's HTTP Client format is line-oriented with a small handful of
+//! shapes: a top-of-file preamble of `@name = value` variables and `# @env`
+//! directives, then any number of `###`-separated request blocks. Within
+//! each block: optional `# @<option>` directives, a `METHOD url` line,
+//! `Header: value` lines, a blank-line-separated body, and an optional
+//! `>>` / `>>!` response-redirect line.
+//!
+//! The parser is deliberately tolerant — blank lines, comments, and
+//! whitespace are forgiven — but it surfaces line-numbered
+//! [`HttpClientError`] variants for the things that genuinely don't make
+//! sense (e.g. `@timeout fast`).
+//!
+//! A separate Tree-sitter grammar exists for Zed's syntax highlighting and
+//! runnable detection; the two parsers run independently and the CLI uses
+//! this one for execution semantics.
+
 use crate::{
     error::HttpClientError,
     model::{
@@ -17,6 +35,7 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
 
     let mut requests = Vec::new();
     let mut variables = Vec::new();
+    let mut default_env: Option<String> = None;
     let mut section_start = 0usize;
     let mut pending_name: Option<String> = None;
     let mut seen_separator = false;
@@ -25,6 +44,7 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
         if line.trim_start().starts_with("###") {
             if !seen_separator {
                 variables.extend(parse_variables(&lines[0..idx]));
+                default_env = parse_default_env(&lines[0..idx])?;
             } else if let Some(request) =
                 parse_section(&lines[section_start..idx], pending_name.take())?
             {
@@ -43,14 +63,17 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
         }
     } else {
         let prelude_vars = parse_variables(&lines);
+        let prelude_env = parse_default_env(&lines)?;
         if prelude_vars.len() == lines.len()
             || lines
                 .iter()
                 .all(|(_, line)| line.trim().is_empty() || is_comment(line))
         {
             variables = prelude_vars;
+            default_env = prelude_env;
         } else {
             variables = prelude_vars;
+            default_env = prelude_env;
             if let Some(request) = parse_section(&lines, None)? {
                 requests.push(request);
             }
@@ -58,9 +81,37 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
     }
 
     Ok(RequestFile {
+        default_env,
         variables,
         requests,
     })
+}
+
+fn parse_default_env(lines: &[NumberedLine<'_>]) -> Result<Option<String>, HttpClientError> {
+    let mut result: Option<String> = None;
+    for (line_no, line) in lines {
+        let Some(directive) = parse_option_directive(line) else {
+            continue;
+        };
+        if directive.name != "env" {
+            continue;
+        }
+        let value = directive
+            .value
+            .as_deref()
+            .ok_or_else(|| HttpClientError::InvalidOption {
+                line: *line_no,
+                content: "@env requires an environment name".to_string(),
+            })?;
+        if result.is_some() {
+            return Err(HttpClientError::InvalidOption {
+                line: *line_no,
+                content: format!("@env is declared more than once (second value: '{value}')"),
+            });
+        }
+        result = Some(value.trim().to_string());
+    }
+    Ok(result)
 }
 
 pub fn select_request_by_line(file: &RequestFile, line: usize) -> Option<&RequestBlock> {
@@ -512,6 +563,47 @@ Content-Type: application/json
             .and_then(RequestBody::as_inline)
             .unwrap()
             .contains("\"Alice\""));
+    }
+
+    #[test]
+    fn parses_file_level_env_directive() {
+        let input = "# @env dev\n@host = https://example.com\n\n### Ping\nGET {{host}}/ping\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.default_env.as_deref(), Some("dev"));
+        assert_eq!(file.variables.len(), 1);
+        assert_eq!(file.requests.len(), 1);
+    }
+
+    #[test]
+    fn env_directive_without_separators_still_parses() {
+        let input = "# @env prod\n";
+        let file = parse_request_file(input).unwrap();
+        assert_eq!(file.default_env.as_deref(), Some("prod"));
+        assert!(file.requests.is_empty());
+    }
+
+    #[test]
+    fn duplicate_env_directive_errors() {
+        let input = "# @env dev\n# @env prod\n\n### Ping\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, content } => {
+                assert_eq!(line, 2);
+                assert!(content.contains("more than once"));
+            }
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn env_directive_with_no_value_errors() {
+        let input = "# @env\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, .. } => assert_eq!(line, 1),
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
     }
 
     #[test]

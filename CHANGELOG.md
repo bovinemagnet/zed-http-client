@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-20
+
+Small follow-up that makes per-environment runs ergonomic to set up from
+inside the `.http` file itself, rather than forcing the choice into the
+Zed task entry.
+
+### Added
+
+- `# @env <name>` directive parsed from the file's top-of-file preamble
+  (before the first `###` separator). Selects which environment from
+  `http-client.env.json` / `http-client.private.env.json` is overlaid when
+  no `--env` flag is passed.
+- Precedence: `--env <name>` on the CLI wins; otherwise the directive
+  applies; otherwise no environment is loaded and only in-file `@vars`
+  resolve.
+- `zed-http format` round-trips the directive — emits `# @env <name>` at
+  the top of the formatted output.
+- `zed-http check` honours the directive when looking up cached schemas
+  for `{{host}}`-style URLs, so schema validation works in CI without
+  having to thread `--env` through.
+
+### Diagnostics
+
+- Duplicate `# @env` declarations error with `@env is declared more than
+  once`, line-numbered.
+- `# @env` with no value errors with `@env requires an environment name`,
+  line-numbered.
+
+### Documentation
+
+- Module-level doc comments added to every Rust source file across
+  `zed-http-core` and `zed-http-cli`, summarising what each module does
+  and what surrounding code can rely on. Inline commentary was kept to
+  WHY-only per the repo style.
+
 ## [0.4.0] - 2026-05-20
 
 Opens the v0.4 "IntelliJ parity push" tier from the initial PRD with three

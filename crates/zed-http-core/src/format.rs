@@ -1,3 +1,12 @@
+//! Re-emits a parsed [`RequestFile`] in a canonical layout, used by
+//! `zed-http format` and by the Postman importer.
+//!
+//! Round-trip target: anything the parser can produce should be
+//! re-emittable here, and re-parsing the output should give an equal
+//! `RequestFile`. The one explicit loss is non-directive comments inside
+//! a request — the parser discards them, so the formatter can't put them
+//! back. Document-level comments outside requests are likewise dropped.
+
 use crate::model::{
     RequestBlock, RequestBody, RequestFile, RequestOptions, ResponseAssertion, ResponseRedirect,
 };
@@ -5,10 +14,20 @@ use crate::model::{
 pub fn format_request_file(file: &RequestFile) -> String {
     let mut output = String::new();
 
+    if let Some(env) = &file.default_env {
+        output.push_str(&format!("# @env {env}\n"));
+    }
+    if file.default_env.is_some() && !file.variables.is_empty() {
+        output.push('\n');
+    }
+
     for variable in &file.variables {
         output.push_str(&format!("@{} = {}\n", variable.name, variable.value));
     }
-    if !file.variables.is_empty() && !file.requests.is_empty() {
+    if (!file.variables.is_empty() || file.default_env.is_some())
+        && !file.requests.is_empty()
+        && !output.ends_with("\n\n")
+    {
         output.push('\n');
     }
 
@@ -141,6 +160,20 @@ mod tests {
         assert!(formatted.contains("# @no-redirect"));
         assert!(formatted.contains("< ./body.json"));
         assert!(formatted.contains(">>! ./out.json"));
+    }
+
+    #[test]
+    fn emits_file_level_env_directive() {
+        let input = "# @env dev\n@host = https://example.com\n\n### Ping\nGET {{host}}/ping\n";
+        let parsed = parse_request_file(input).unwrap();
+        let formatted = format_request_file(&parsed);
+
+        assert!(formatted.starts_with("# @env dev\n"));
+        // re-parse round-trip
+        let reparsed = parse_request_file(&formatted).unwrap();
+        assert_eq!(reparsed.default_env.as_deref(), Some("dev"));
+        assert_eq!(reparsed.variables.len(), 1);
+        assert_eq!(reparsed.requests.len(), 1);
     }
 
     #[test]

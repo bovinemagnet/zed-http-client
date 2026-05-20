@@ -1,3 +1,28 @@
+//! `zed-http` — the CLI half of the zed-http-client project.
+//!
+//! Thin wrapper around [`zed_http_core`]: clap dispatches a subcommand, the
+//! handler asks core to parse / resolve / validate, and then this binary
+//! does the I/O — `reqwest` for HTTP, `cookie_store` for the persistent
+//! jar, plus filesystem writes for response persistence, schema caching,
+//! and `>>` / `>>!` redirect output.
+//!
+//! Subcommands:
+//!
+//! - `run`        — execute a single request, with optional pre-flight
+//!   validation and per-request `# @timeout` / `# @no-redirect` /
+//!   `# @fragments` / `# @expect-*` directives honoured.
+//! - `check`      — validate every request in a file without sending.
+//! - `list`       — enumerate requests with line numbers (drives Zed's
+//!   "select a request" pickers).
+//! - `envs`       — list environment names defined across the public and
+//!   private env files.
+//! - `format`     — re-emit a file in canonical layout.
+//! - `introspect` — send the standard GraphQL introspection query against
+//!   a selected GRAPHQL request and cache the schema.
+//! - `schema`     — inspect / list cached schemas.
+//! - `import`     — translate a Postman v2.1 collection into a `.http`
+//!   file.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -232,21 +257,25 @@ fn check_command(file: &Path, env: Option<&str>, worktree: Option<&Path>) -> Res
 
     let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
     for request in &parsed.requests {
-        let resolved_url = if env.is_some() {
-            prepare_request(
-                file,
-                &contents,
-                RequestSelector::Line(request.range.start_line),
-                env,
-                worktree,
-            )
-            .ok()
-            .map(|resolved| resolved.url)
-        } else if !request.url.contains("{{") {
-            Some(request.url.clone())
-        } else {
-            None
-        };
+        // Try the resolver first (honours --env and any `# @env` directive). If
+        // it fails (e.g. missing variable), fall back to the raw URL when
+        // there's no interpolation left to do.
+        let resolved_url = prepare_request(
+            file,
+            &contents,
+            RequestSelector::Line(request.range.start_line),
+            env,
+            worktree,
+        )
+        .ok()
+        .map(|resolved| resolved.url)
+        .or_else(|| {
+            if !request.url.contains("{{") {
+                Some(request.url.clone())
+            } else {
+                None
+            }
+        });
         schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
     }
 

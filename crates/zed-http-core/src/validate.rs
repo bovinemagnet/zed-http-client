@@ -1,3 +1,22 @@
+//! Pre-flight checks that the CLI runs before sending a request (and that
+//! `zed-http check` runs across a whole file without sending anything).
+//!
+//! Two layers:
+//!
+//! - Schema-free, always-on: URL is non-empty; GraphQL bodies parse;
+//!   GraphQL variable definitions on the operation match the JSON
+//!   variables block (required-but-missing, required-but-null, extra
+//!   keys).
+//! - Schema-aware, opt-in via a populated schema cache: top-level field
+//!   selections exist on the schema's root type for the operation kind.
+//!   Delegated to [`crate::schema::validate_against_schema`].
+//!
+//! [`validate_request_file_with_schemas`] takes a closure that resolves a
+//! schema per request — the CLI uses this to load
+//! `<base>/.zed-http/schema/<host>.json` after env interpolation, so
+//! requests with `{{host}}` URLs still get checked when env files are
+//! available.
+
 use serde_json::Value;
 
 use crate::{

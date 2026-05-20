@@ -1,3 +1,18 @@
+//! `http-client.env.json` discovery, layering, and secret masking.
+//!
+//! Mirrors JetBrains' lookup behaviour: walk up from the `.http` file's
+//! directory toward the worktree root (or filesystem root) looking for
+//! `http-client.env.json` (public, checked-in) and
+//! `http-client.private.env.json` (gitignored, holds secrets). Then layer
+//! private over public so a private file can override a public placeholder
+//! without leaking real values into git.
+//!
+//! `mask_value` / `mask_variables` are only used by the CLI's `--verbose`
+//! dump; they don't touch the wire request. The list of "sensitive"
+//! substrings (`token`, `secret`, `password`, `apikey`, `api_key`,
+//! `authorization`) is intentionally small — over-masking would hide useful
+//! debug detail.
+
 use std::{
     fs,
     path::{Path, PathBuf},

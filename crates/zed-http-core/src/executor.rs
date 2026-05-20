@@ -1,3 +1,23 @@
+//! Glues the parsing, env lookup, interpolation, and GraphQL bits into a
+//! [`ResolvedRequest`] the CLI can hand to `reqwest`.
+//!
+//! Flow for one invocation:
+//!
+//! 1. Parse the file.
+//! 2. Select a request via [`RequestSelector`] (by cursor line, by name, or
+//!    take the first one).
+//! 3. Load env files into a [`VariableMap`], overlay in-file `@vars`,
+//!    resolve nested references.
+//! 4. Interpolate the URL, headers, body, and response-redirect path.
+//! 5. If `< ./path` body-from-file is in play, read the file (relative to
+//!    the `.http` file's directory) and run interpolation on its contents
+//!    too.
+//! 6. For `GRAPHQL` requests, concatenate any `# @fragments` content onto
+//!    the operation, render the canonical `{query, variables,
+//!    operationName}` payload, force `Content-Type` and `Accept` to
+//!    `application/json`.
+//! 7. Resolve env precedence as `--env` > `# @env` > none.
+
 use std::{fs, path::Path};
 
 use indexmap::IndexMap;
@@ -67,7 +87,8 @@ pub fn prepare_request(
     worktree_root: Option<&Path>,
 ) -> Result<ResolvedRequest, HttpClientError> {
     let (request_file, request) = parse_and_select_request(contents, selector)?;
-    let mut variables = load_environment(http_file, worktree_root, env_name)?;
+    let resolved_env = env_name.or(request_file.default_env.as_deref());
+    let mut variables = load_environment(http_file, worktree_root, resolved_env)?;
     for variable in request_file.variables {
         variables.insert(variable.name, variable.value);
     }
@@ -230,6 +251,43 @@ mod tests {
         let redirect = resolved.response_redirect.unwrap();
         assert_eq!(redirect.path, "./out/last.json");
         assert!(redirect.force_overwrite);
+    }
+
+    #[test]
+    fn falls_back_to_file_level_env_directive() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(&request_file, "# @env dev\n\n### Ping\nGET {{host}}/ping\n").unwrap();
+        fs::write(
+            dir.join("http-client.env.json"),
+            r#"{
+  "dev":  { "host": "https://dev.example.com" },
+  "prod": { "host": "https://prod.example.com" }
+}"#,
+        )
+        .unwrap();
+
+        // No CLI env passed → should use "dev" from the directive.
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+        assert_eq!(resolved.url, "https://dev.example.com/ping");
+
+        // Explicit --env prod should override the directive.
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            Some("prod"),
+            Some(&dir),
+        )
+        .unwrap();
+        assert_eq!(resolved.url, "https://prod.example.com/ping");
     }
 
     #[test]

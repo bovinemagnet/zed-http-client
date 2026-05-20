@@ -1,3 +1,19 @@
+//! Evaluates `# @expect-*` response assertions after a request returns.
+//!
+//! Three flavours, all parsed by [`crate::parser`]:
+//!
+//! - `# @expect-status 200,204` — accept any of a comma-separated list.
+//! - `# @expect-header content-type application/json` — case-insensitive
+//!   header lookup, substring match against the value.
+//! - `# @expect-json /users/0/name Alice` — JSON Pointer into the response
+//!   body, equality match against the literal expected text (string,
+//!   number, bool, or `null`).
+//!
+//! Each failure carries the source line for `<path>:<line>: <message>`
+//! framing in the CLI. The JSON body is parsed lazily and cached across
+//! assertions so we don't repeat the work for files with several
+//! `# @expect-json` directives.
+
 use serde_json::Value;
 
 use crate::model::ResponseAssertion;

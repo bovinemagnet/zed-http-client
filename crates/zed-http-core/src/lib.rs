@@ -1,3 +1,37 @@
+//! Core library for the `zed-http` CLI and the companion Zed extension.
+//!
+//! The crate is intentionally CLI-agnostic: it parses IntelliJ-style `.http`
+//! files, resolves `http-client.env.json` overlays, applies `{{var}}`
+//! interpolation, validates GraphQL operations, formats the file back out
+//! canonically, and imports Postman collections. Everything that actually
+//! sends an HTTP request lives in `zed-http-cli`; this crate stops at
+//! producing a fully resolved [`executor::ResolvedRequest`].
+//!
+//! Module map:
+//!
+//! - [`parser`] — tokenises a `.http` file into a [`model::RequestFile`].
+//! - [`model`] — the typed AST used by every other module.
+//! - [`env`] — discovers and overlays `http-client.env.json` files.
+//! - [`interpolate`] — substitutes `{{var}}` references; supports nested vars.
+//! - [`executor`] — glues parse → env lookup → interpolation → GraphQL render
+//!   into a [`executor::ResolvedRequest`]. The CLI's `run` command takes it
+//!   from there.
+//! - [`graphql`] — splits a GraphQL body into `{query, variables,
+//!   operationName}`, plus the introspection query bundled with the binary.
+//! - [`schema`] — locates a cached introspection schema for a given request
+//!   URL and reports unknown top-level field selections.
+//! - [`validate`] — pre-flight checks before a request fires (variable
+//!   completeness, schema-aware field validation when a cache exists).
+//! - [`assertion`] — `# @expect-*` directives evaluated against a response.
+//! - [`format`] — re-emits a parsed file in canonical layout, used by
+//!   `zed-http format`.
+//! - [`output`] — pretty-printers, response persistence under `.zed-http/`,
+//!   and the conventional paths for the response/schema/cookie artefact
+//!   directories.
+//! - [`postman`] — translates Postman v2.1 collection JSON into a
+//!   [`model::RequestFile`] for use with the formatter.
+//! - [`error`] — single [`error::HttpClientError`] type returned everywhere.
+
 pub mod assertion;
 pub mod env;
 pub mod error;
