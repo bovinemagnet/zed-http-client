@@ -1,0 +1,11 @@
+id = "http-client"
+name = "HTTP Client"
+version = "0.1.0"
+schema_version = 1
+authors = ["Paul Snow <bovinemagnet@gmail.com>"]
+description = "Run IntelliJ-compatible HTTP and GraphQL request files from Zed"
+repository = "https://github.com/bovinemagnet/zed-http-client"
+
+[grammars.http-request]
+repository = "https://github.com/bovinemagnet/tree-sitter-http-request"
+rev = "REPLACE_WITH_COMMIT_SHA"

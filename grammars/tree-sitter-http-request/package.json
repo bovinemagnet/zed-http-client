@@ -1,0 +1,13 @@
+{
+  "name": "tree-sitter-http-request",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for HTTP request files",
+  "main": "grammar.js",
+  "keywords": [
+    "tree-sitter",
+    "http",
+    "graphql",
+    "zed"
+  ],
+  "license": "Apache-2.0"
+}
