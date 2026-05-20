@@ -8,7 +8,7 @@ module.exports = grammar({
 
     blank_line: () => /\n+/, 
 
-    comment: () => token(choice(seq("#", /.*/), seq("//", /.*/))),
+    comment: () => token(choice(/#{1,2}([^#\n][^\n]*)?/, /\/\/[^\n]*/)),
 
     variable_declaration: ($) => seq("@", field("name", $.identifier), optional(/[ \t]*/), "=", optional(/[ \t]*/), field("value", $.variable_value), "\n"),
 
@@ -39,8 +39,6 @@ module.exports = grammar({
     header_name: () => /[A-Za-z0-9-]+/,
     header_value: ($) => repeat1(choice($.interpolation, /[^\n]+/)),
 
-    body: ($) => repeat1(choice($.json_string, $.json_number, $.interpolation, /[^\n]+/, "\n")),
-    json_string: () => /"([^"\\]|\\.)*"/,
-    json_number: () => /-?\d+(\.\d+)?/
+    body: () => token(/([^#\n][^\n]*\n?|#[^#\n][^\n]*\n?|##[^#\n][^\n]*\n?|\n)+/),
   }
 });

@@ -7,5 +7,3 @@
 (interpolation) @variable.special
 (header_name) @property
 (header_value) @string
-(json_string) @string
-(json_number) @number

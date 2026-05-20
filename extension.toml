@@ -9,4 +9,4 @@ languages = ["languages/http-request"]
 
 [grammars.http-request]
 repository = "https://github.com/bovinemagnet/tree-sitter-http-request"
-rev = "35d96ed7a38d59ff6e889ba2c93b1fb42a16b8f0"
+rev = "d58c11feca5635f1f556d8771be70a2dc5d76430"
