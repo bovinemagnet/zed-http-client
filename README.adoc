@@ -2,7 +2,7 @@
 :toc: macro
 :toclevels: 2
 :source-highlighter: highlight.js
-:project-version: 0.4.6
+:project-version: 0.4.7
 
 A Zed editor extension and companion Rust CLI for running IntelliJ-style HTTP and GraphQL request files inside Zed or from the terminal.
 

@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-05-20
+
+Fixes the v0.4.6 release workflow. The 0.4.6 tag triggered the new
+GitHub Actions pipeline but every target failed at the openssl-sys
+build step because `reqwest`'s default features were still pulling in
+native-tls (and therefore the OpenSSL C headers), which the
+cross-compile sysroots don't carry.
+
+### Fixed
+
+- `crates/zed-http-cli/Cargo.toml` now sets `default-features = false`
+  on the `reqwest` dependency and explicitly enumerates the features
+  we actually use (`json`, `rustls-tls`, `cookies`, `http2`, `charset`).
+  This disables the default `default-tls` (native-tls + openssl) which
+  cross-compile targets like `aarch64-unknown-linux-gnu` can't resolve
+  on a GitHub-hosted x86_64 runner, while keeping the runtime
+  behaviour identical for local builds.
+- HTTPS still works everywhere — `rustls-tls` was already in our
+  feature list and remains the active TLS backend; the change only
+  removes the redundant native-tls codepath that wasn't being used.
+
+### Operational notes
+
+- The v0.4.6 GitHub release exists on the repo but carries no
+  artefacts (every matrix entry failed). It is left in place rather
+  than retagged to avoid a destructive force-push; v0.4.7 is the
+  first tag the release workflow will succeed against.
+
 ## [0.4.6] - 2026-05-20
 
 Adds GitHub Actions for both CI and release packaging. No new
