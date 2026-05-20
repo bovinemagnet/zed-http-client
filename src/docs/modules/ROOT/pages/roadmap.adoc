@@ -60,7 +60,7 @@ _Shipped in releases 0.4.0 and 0.4.1._
 
 === v0.4.x — quality of life
 
-_Shipped in releases 0.4.1, 0.4.2, 0.4.4, and 0.4.5._
+_Shipped in releases 0.4.1, 0.4.2, 0.4.4, 0.4.5, and 0.4.6._
 
 * [x] `# @env` file-level directive (0.4.1) — see above
 * [x] Module-level documentation across the workspace (0.4.1) — every Rust source file carries a doc comment summarising its purpose
@@ -69,6 +69,7 @@ _Shipped in releases 0.4.1, 0.4.2, 0.4.4, and 0.4.5._
 * [x] xref:captures.adoc[Response variable capture] (0.4.4) — `# @capture <variable> json:<pointer>|header:<name>|status` lifts values out of each response into the variable map; `--var name=value` (repeatable) seeds the map from the CLI; sensitive keys masked in output; unresolvable captures warn rather than fail
 * [x] xref:har-import.adoc[HAR archive import] (0.4.5) — `zed-http import har --file <path>` translates a browser "Save all as HAR with content" export into a multi-request `.http` file; closes the import-source trio (Postman + curl + HAR)
 * [x] xref:cli-reference.adoc#completions[Shell completions] (0.4.5) — `zed-http completions <shell>` emits a clap-generated completion script for bash, zsh, fish, powershell, or elvish
+* [x] GitHub Actions release pipeline (0.4.6) — `.github/workflows/release.yml` builds `zed-http` for five targets (linux x86_64/aarch64, macos x86_64/aarch64, windows x86_64) on every `v*` tag push and attaches the archives plus SHA-256 sidecars to the GitHub Release; `.github/workflows/ci.yml` runs `cargo test` + `clippy -D warnings` + `fmt --check` on every push and PR
 
 [[deferred]]
 == Deferred

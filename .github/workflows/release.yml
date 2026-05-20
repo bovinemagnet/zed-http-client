@@ -1,0 +1,74 @@
+name: Release
+
+# Fires when a maintainer pushes an annotated `v*` tag (e.g. `v0.4.6`).
+# Builds the `zed-http` binary for the five supported targets, packages
+# each one (tar.gz on Unix, zip on Windows), and attaches the artefacts
+# to a GitHub Release whose body is the tag's annotation.
+#
+# All inputs to this workflow are either hardcoded in the matrix below
+# or come from secrets.GITHUB_TOKEN — no untrusted event payloads are
+# interpolated into run: commands.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install aarch64 cross-compiler (Linux only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cache cargo registry + build output
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Upload binary to release
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: zed-http
+          target: ${{ matrix.target }}
+          # Package shape: zed-http-<target>.tar.gz or .zip
+          archive: zed-http-$target
+          tar: unix
+          zip: windows
+          # SHA256 sidecar per artefact.
+          checksum: sha256
+          # Only the CLI crate ships a binary.
+          manifest_path: crates/zed-http-cli/Cargo.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # When cross-compiling aarch64 linux on an x86_64 runner we
+          # need the matching linker; the apt install above provides it.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc

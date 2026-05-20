@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-05-20
+
+Adds GitHub Actions for both CI and release packaging. No new
+user-visible features in the binary itself — this release exists to
+fire the new release workflow once and produce the first set of
+prebuilt binaries.
+
+### Added
+
+- `.github/workflows/release.yml` fires on annotated `v*` tag pushes
+  and builds `zed-http` for five targets, attaching the artefacts to
+  a GitHub Release whose body is the tag's annotation:
+  - `x86_64-unknown-linux-gnu`
+  - `aarch64-unknown-linux-gnu` (cross-compiled via apt-installed
+    `gcc-aarch64-linux-gnu`)
+  - `x86_64-apple-darwin`
+  - `aarch64-apple-darwin`
+  - `x86_64-pc-windows-msvc`
+  Each archive is `zed-http-<target>.tar.gz` (Unix) or `.zip`
+  (Windows) with a SHA-256 sidecar. Built via
+  `taiki-e/upload-rust-binary-action@v1` for cross-compile bookkeeping.
+- `.github/workflows/ci.yml` runs `cargo test --workspace --locked` on
+  ubuntu / macos / windows and `cargo fmt --check` + `cargo clippy -D
+  warnings` on ubuntu, on every push to `main` and every pull request.
+  Caches the cargo registry + build output with `Swatinem/rust-cache`
+  for speed.
+- README and `installation.adoc` now point at the GitHub Releases page
+  for prebuilt downloads, alongside the existing
+  `cargo install --path` and dev-extension paths.
+
+### Operational notes
+
+- Neither workflow interpolates `github.event.*` payloads into `run:`
+  blocks — the only template inputs are `matrix.target` and
+  `matrix.os`, both hardcoded in the matrix `include` lists. Secrets
+  scope is restricted to `secrets.GITHUB_TOKEN` for the release upload.
+
 ## [0.4.5] - 2026-05-20
 
 Closes the import-source trio (Postman + curl + HAR) and adds shell

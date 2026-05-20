@@ -52,7 +52,24 @@ Alternatively, work with `.rest` files during testing — only this extension re
 
 == As a standalone CLI
 
-The `zed-http` binary can be installed globally or used in-place during development.
+The `zed-http` binary can be installed from a prebuilt archive, compiled with `cargo install`, or used in-place during development.
+
+=== Prebuilt binary
+
+The link:{project-repo}/releases[GitHub Releases page] carries a `zed-http-<target>.tar.gz` or `zed-http-<target>.zip` for each supported platform, plus a SHA-256 sidecar:
+
+* `x86_64-unknown-linux-gnu`
+* `aarch64-unknown-linux-gnu`
+* `x86_64-apple-darwin`
+* `aarch64-apple-darwin`
+* `x86_64-pc-windows-msvc`
+
+Download the archive that matches your platform, extract `zed-http`, and put it somewhere on your `PATH` (e.g. `/usr/local/bin/` or `~/.local/bin/`). Each release ships SHA-256 checksums alongside the archives — verify with `shasum -a 256 -c zed-http-<target>.tar.gz.sha256` before trusting a binary.
+
+[NOTE]
+====
+The archives are produced by the project's release workflow (`.github/workflows/release.yml`) on every `v*` tag push. The workflow does not interpolate untrusted event payloads into shell commands; the only template inputs are hardcoded matrix entries.
+====
 
 === Install to `~/.cargo/bin`
 
