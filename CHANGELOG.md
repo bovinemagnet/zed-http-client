@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-05-20
+
+Starts the v0.3 GraphQL productivity tier and lands the long-promised
+`format` command from PRD section 5.
+
+### Added
+
+- `zed-http format --file <path>` re-emits the parsed request file in a
+  canonical layout (trimmed whitespace, single space after the method,
+  `Header: value`, blank line before body, options before request line,
+  response redirect after body). Variants:
+  - default: print to stdout
+  - `--in-place`: overwrite the source file
+  - `--check`: exit non-zero if the file is not already canonical
+- `zed-http introspect` runs the standard GraphQL introspection query against
+  the URL and headers of a selected `GRAPHQL` request (`--line` / `--name` /
+  first), reusing env-file interpolation so bearer tokens work out of the box.
+  - Result `.data` is cached at `<base>/.zed-http/schema/<slug>.json` (slug
+    derives from the request URL host), or at a custom `--output` path.
+- Public core API: `format_request_file`, `INTROSPECTION_QUERY`,
+  `introspection_payload`, `schema_root`.
+
+### Known limitations
+
+- `zed-http format` discards non-directive comments (anything other than
+  `# @option …`) inside requests. Document-level commentary outside requests
+  is also dropped. Round-tripping otherwise is structurally lossless.
+
 ## [0.0.3] - 2026-05-20
 
 First tagged release. Covers the v0.1 MVP from the initial PRD plus the v0.2

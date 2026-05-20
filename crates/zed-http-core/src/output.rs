@@ -17,11 +17,19 @@ pub struct ResponseSummary {
 }
 
 pub fn response_root(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
+    base_artifact_dir(http_file, worktree_root).join("responses")
+}
+
+pub fn schema_root(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
+    base_artifact_dir(http_file, worktree_root).join("schema")
+}
+
+fn base_artifact_dir(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
     let base = worktree_root
         .map(Path::to_path_buf)
         .or_else(|| http_file.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join(".zed-http").join("responses")
+    base.join(".zed-http")
 }
 
 pub fn save_response(

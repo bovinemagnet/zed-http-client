@@ -57,6 +57,10 @@ zed-http run --file examples/requests.http --line 20 --env dev
 zed-http run --file examples/requests.http --name "Create user" --env dev
 zed-http list --file examples/requests.http
 zed-http envs --file examples/requests.http
+zed-http format --file examples/requests.http              # print canonical form
+zed-http format --file examples/requests.http --in-place   # rewrite in place
+zed-http format --file examples/requests.http --check      # CI-friendly exit code
+zed-http introspect --file examples/requests.http --name "GraphQL user query"
 ```
 
 ### Run a request
@@ -97,6 +101,31 @@ Example output:
 ```bash
 cargo run -p zed-http-cli -- envs --file examples/requests.http
 ```
+
+### Format a request file
+
+```bash
+cargo run -p zed-http-cli -- format --file examples/requests.http
+cargo run -p zed-http-cli -- format --file examples/requests.http --in-place
+cargo run -p zed-http-cli -- format --file examples/requests.http --check
+```
+
+Note: formatting preserves every parseable construct (variables, request
+names, headers, bodies, body-from-file references, response redirects, option
+directives) but does not preserve non-directive comments inside requests.
+
+### Introspect a GraphQL endpoint
+
+```bash
+cargo run -p zed-http-cli -- introspect --file examples/requests.http \
+  --name "GraphQL user query" --env dev
+```
+
+Runs the standard introspection query against the URL and headers of the
+selected `GRAPHQL` request (env variables, bearer tokens, and in-file
+`@vars` are honoured). The schema's `.data` payload is written to
+`.zed-http/schema/<host>.json` under the worktree (or `--output <path>` to
+override).
 
 ## Zed integration
 

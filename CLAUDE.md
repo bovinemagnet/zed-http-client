@@ -16,6 +16,8 @@ cargo run -p zed-http-cli -- --help
 cargo run -p zed-http-cli -- run --file examples/requests.http --line 4 --env dev --worktree .
 cargo run -p zed-http-cli -- list --file examples/requests.http
 cargo run -p zed-http-cli -- envs --file examples/requests.http
+cargo run -p zed-http-cli -- format --file examples/requests.http --check
+cargo run -p zed-http-cli -- introspect --file examples/requests.http --name "GraphQL user query"
 ```
 
 Tests (most logic lives in `zed-http-core` as `#[cfg(test)]` modules next to each source file):
