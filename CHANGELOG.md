@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-20
+
+Continues the v0.3 GraphQL productivity tier with schema-free static
+validation, exposed as both a standalone `check` command and a pre-flight
+gate in `run`.
+
+### Added
+
+- `zed-http check --file <path>` parses every request in a file and reports
+  validation issues (with file:line annotations) without making any HTTP
+  request. Exits non-zero on any issue.
+- `zed-http run` now validates the selected request before sending. Pass
+  `--no-validate` to skip the check for ad-hoc debugging.
+- GraphQL variables validation, schema-free:
+  - Parses `($id: ID!, $limit: Int = 10)` variable definitions from the
+    operation (anonymous operations and `query`/`mutation`/`subscription`
+    keywords supported).
+  - Reports required variables missing from the JSON variables block.
+  - Reports required variables provided as `null`.
+  - Reports extra variables in the JSON block that aren't declared on the
+    operation.
+- Public core API: `validate_request_file`, `validate_request`,
+  `ValidationIssue`, `parse_variable_definitions`, `validate_variables`,
+  `VariableDefinition`.
+
+### Changed
+
+- `run_command` internals refactored to take a `RunOptions` struct so the
+  validation flag fits without tripping clippy's `too_many_arguments`.
+
 ## [0.1.0] - 2026-05-20
 
 Starts the v0.3 GraphQL productivity tier and lands the long-promised

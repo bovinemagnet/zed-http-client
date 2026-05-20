@@ -17,6 +17,7 @@ cargo run -p zed-http-cli -- run --file examples/requests.http --line 4 --env de
 cargo run -p zed-http-cli -- list --file examples/requests.http
 cargo run -p zed-http-cli -- envs --file examples/requests.http
 cargo run -p zed-http-cli -- format --file examples/requests.http --check
+cargo run -p zed-http-cli -- check --file examples/requests.http
 cargo run -p zed-http-cli -- introspect --file examples/requests.http --name "GraphQL user query"
 ```
 

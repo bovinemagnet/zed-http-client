@@ -11,7 +11,8 @@ use serde_json::json;
 use zed_http_core::{
     build_preview, format_pretty_response, format_request_file, introspection_payload,
     list_environments, mask_variables, parse_request_file, prepare_request, response_root,
-    save_response, schema_root, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
+    save_response, schema_root, validate_request, validate_request_file, RequestMethod,
+    RequestSelector, ResolvedRequest, ResponseSummary, ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -44,6 +45,12 @@ enum Commands {
         output: OutputMode,
         #[arg(long)]
         verbose: bool,
+        #[arg(long)]
+        no_validate: bool,
+    },
+    Check {
+        #[arg(long)]
+        file: PathBuf,
     },
     List {
         #[arg(long)]
@@ -99,18 +106,21 @@ async fn main() -> Result<()> {
             worktree,
             output,
             verbose,
+            no_validate,
         } => {
-            run_command(
-                &file,
+            run_command(RunOptions {
+                file: &file,
                 line,
-                name.as_deref(),
-                env.as_deref(),
-                worktree.as_deref(),
-                output,
+                name: name.as_deref(),
+                env: env.as_deref(),
+                worktree: worktree.as_deref(),
+                output_mode: output,
                 verbose,
-            )
+                no_validate,
+            })
             .await
         }
+        Commands::Check { file } => check_command(&file),
         Commands::List { file } => list_command(&file),
         Commands::Envs { file, worktree } => envs_command(&file, worktree.as_deref()),
         Commands::Format {
@@ -157,6 +167,54 @@ fn list_command(file: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn check_command(file: &Path) -> Result<()> {
+    let contents =
+        fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
+    let parsed = parse_request_file(&contents)
+        .with_context(|| format!("failed to parse {}", file.display()))?;
+    let issues = validate_request_file(&parsed);
+    if issues.is_empty() {
+        println!(
+            "{}: {} request(s) validated, no issues",
+            file.display(),
+            parsed.requests.len()
+        );
+        return Ok(());
+    }
+    print_issues(file, &issues);
+    anyhow::bail!("{} validation issue(s) found", issues.len());
+}
+
+fn print_issues(file: &Path, issues: &[ValidationIssue]) {
+    for issue in issues {
+        let label = issue.request_name.as_deref().unwrap_or("(unnamed)");
+        eprintln!(
+            "{}:{}: [{}] {}",
+            file.display(),
+            issue.line,
+            label,
+            issue.message
+        );
+    }
+}
+
+fn select_block_for_validation<'a>(
+    file: &'a zed_http_core::RequestFile,
+    name: Option<&str>,
+    line: Option<usize>,
+) -> Result<&'a zed_http_core::RequestBlock> {
+    match (name, line) {
+        (Some(name), _) => zed_http_core::select_request_by_name(file, name)
+            .ok_or_else(|| anyhow::anyhow!("no request named '{name}' found for validation")),
+        (None, Some(line)) => zed_http_core::select_request_by_line(file, line)
+            .ok_or_else(|| anyhow::anyhow!("no request found at line {line} for validation")),
+        (None, None) => file
+            .requests
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no requests found in file for validation")),
+    }
 }
 
 fn format_command(file: &Path, in_place: bool, check: bool) -> Result<()> {
@@ -293,15 +351,28 @@ fn envs_command(file: &Path, worktree: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-async fn run_command(
-    file: &Path,
+struct RunOptions<'a> {
+    file: &'a Path,
     line: Option<usize>,
-    name: Option<&str>,
-    env: Option<&str>,
-    worktree: Option<&Path>,
+    name: Option<&'a str>,
+    env: Option<&'a str>,
+    worktree: Option<&'a Path>,
     output_mode: OutputMode,
     verbose: bool,
-) -> Result<()> {
+    no_validate: bool,
+}
+
+async fn run_command(opts: RunOptions<'_>) -> Result<()> {
+    let RunOptions {
+        file,
+        line,
+        name,
+        env,
+        worktree,
+        output_mode,
+        verbose,
+        no_validate,
+    } = opts;
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
     let selector = match (name, line) {
@@ -309,6 +380,20 @@ async fn run_command(
         (None, Some(line)) => RequestSelector::Line(line),
         (None, None) => RequestSelector::First,
     };
+
+    if !no_validate {
+        let parsed = parse_request_file(&contents)
+            .with_context(|| format!("failed to parse {}", file.display()))?;
+        let selected = select_block_for_validation(&parsed, name, line)?;
+        let issues = validate_request(selected);
+        if !issues.is_empty() {
+            print_issues(file, &issues);
+            anyhow::bail!(
+                "request failed validation; re-run with --no-validate to skip these checks"
+            );
+        }
+    }
+
     let resolved = prepare_request(file, &contents, selector, env, worktree)
         .with_context(|| format!("failed to prepare request from {}", file.display()))?;
 

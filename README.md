@@ -60,6 +60,7 @@ zed-http envs --file examples/requests.http
 zed-http format --file examples/requests.http              # print canonical form
 zed-http format --file examples/requests.http --in-place   # rewrite in place
 zed-http format --file examples/requests.http --check      # CI-friendly exit code
+zed-http check --file examples/requests.http               # validate without sending
 zed-http introspect --file examples/requests.http --name "GraphQL user query"
 ```
 
@@ -101,6 +102,22 @@ Example output:
 ```bash
 cargo run -p zed-http-cli -- envs --file examples/requests.http
 ```
+
+### Validate a request file
+
+```bash
+cargo run -p zed-http-cli -- check --file examples/requests.http
+```
+
+Schema-free static validation. Today it covers:
+
+- non-empty request URLs
+- GraphQL bodies parse into `{query, variables, operationName}`
+- GraphQL variable definitions on the operation match the JSON variables block
+  (required-but-missing, required-but-null, declared-but-extra)
+
+`zed-http run` runs the same checks against the selected request before
+sending. Pass `--no-validate` to skip them for ad-hoc debugging.
 
 ### Format a request file
 
