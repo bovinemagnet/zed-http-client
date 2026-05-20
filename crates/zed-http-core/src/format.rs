@@ -68,6 +68,9 @@ fn format_options(output: &mut String, options: &RequestOptions) {
     if options.no_redirect {
         output.push_str("# @no-redirect\n");
     }
+    for path in &options.fragment_paths {
+        output.push_str(&format!("# @fragments {path}\n"));
+    }
 }
 
 fn format_response_redirect(output: &mut String, redirect: &ResponseRedirect) {

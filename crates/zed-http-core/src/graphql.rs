@@ -220,7 +220,19 @@ pub fn build_graphql_payload(body: &str) -> Result<GraphQlPayload, HttpClientErr
 }
 
 pub fn render_graphql_json(body: &str) -> Result<String, HttpClientError> {
-    let payload = build_graphql_payload(body)?;
+    render_graphql_json_with_extras(body, "")
+}
+
+pub fn render_graphql_json_with_extras(
+    body: &str,
+    extra_query: &str,
+) -> Result<String, HttpClientError> {
+    let mut payload = build_graphql_payload(body)?;
+    let trimmed = extra_query.trim();
+    if !trimmed.is_empty() {
+        payload.query.push_str("\n\n");
+        payload.query.push_str(trimmed);
+    }
     let mut object = Map::new();
     object.insert("query".to_string(), Value::String(payload.query));
     if let Some(variables) = payload.variables {

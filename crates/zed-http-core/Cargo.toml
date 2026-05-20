@@ -1,6 +1,6 @@
 [package]
 name = "zed-http-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -11,3 +11,4 @@ serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
+url = "2"

@@ -10,9 +10,10 @@ use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
 use serde_json::json;
 use zed_http_core::{
     build_preview, format_pretty_response, format_request_file, introspection_payload,
-    list_environments, mask_variables, parse_request_file, prepare_request, response_root,
-    save_response, schema_root, validate_request, validate_request_file, RequestMethod,
-    RequestSelector, ResolvedRequest, ResponseSummary, ValidationIssue,
+    list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
+    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
+    validate_request_with_schema, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
+    ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -51,6 +52,10 @@ enum Commands {
     Check {
         #[arg(long)]
         file: PathBuf,
+        #[arg(long)]
+        env: Option<String>,
+        #[arg(long)]
+        worktree: Option<PathBuf>,
     },
     List {
         #[arg(long)]
@@ -83,6 +88,24 @@ enum Commands {
         worktree: Option<PathBuf>,
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SchemaCommand {
+    List {
+        #[arg(long)]
+        worktree: Option<PathBuf>,
+    },
+    Show {
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        worktree: Option<PathBuf>,
     },
 }
 
@@ -120,7 +143,12 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Commands::Check { file } => check_command(&file),
+        Commands::Check {
+            file,
+            env,
+            worktree,
+        } => check_command(&file, env.as_deref(), worktree.as_deref()),
+        Commands::Schema { command } => schema_command(command),
         Commands::List { file } => list_command(&file),
         Commands::Envs { file, worktree } => envs_command(&file, worktree.as_deref()),
         Commands::Format {
@@ -169,12 +197,36 @@ fn list_command(file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn check_command(file: &Path) -> Result<()> {
+fn check_command(file: &Path, env: Option<&str>, worktree: Option<&Path>) -> Result<()> {
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
     let parsed = parse_request_file(&contents)
         .with_context(|| format!("failed to parse {}", file.display()))?;
-    let issues = validate_request_file(&parsed);
+
+    let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
+    for request in &parsed.requests {
+        let resolved_url = if env.is_some() {
+            prepare_request(
+                file,
+                &contents,
+                RequestSelector::Line(request.range.start_line),
+                env,
+                worktree,
+            )
+            .ok()
+            .map(|resolved| resolved.url)
+        } else if !request.url.contains("{{") {
+            Some(request.url.clone())
+        } else {
+            None
+        };
+        schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
+    }
+
+    let issues = validate_request_file_with_schemas(&parsed, |idx, _| {
+        schemas.get(idx).and_then(|slot| slot.clone())
+    });
+
     if issues.is_empty() {
         println!(
             "{}: {} request(s) validated, no issues",
@@ -185,6 +237,107 @@ fn check_command(file: &Path) -> Result<()> {
     }
     print_issues(file, &issues);
     anyhow::bail!("{} validation issue(s) found", issues.len());
+}
+
+fn schema_command(command: SchemaCommand) -> Result<()> {
+    match command {
+        SchemaCommand::List { worktree } => {
+            let dir = schema_dir(worktree.as_deref());
+            if !dir.exists() {
+                println!("No cached schemas at {}", dir.display());
+                return Ok(());
+            }
+            let mut entries: Vec<_> = fs::read_dir(&dir)
+                .with_context(|| format!("failed to read {}", dir.display()))?
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .map(|ext| ext == "json")
+                        .unwrap_or(false)
+                })
+                .collect();
+            entries.sort_by_key(|entry| entry.file_name());
+            if entries.is_empty() {
+                println!("No cached schemas at {}", dir.display());
+                return Ok(());
+            }
+            for entry in entries {
+                let metadata = entry.metadata().ok();
+                let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                println!(
+                    "{}\t{} bytes",
+                    entry
+                        .path()
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy(),
+                    size
+                );
+            }
+            Ok(())
+        }
+        SchemaCommand::Show { host, worktree } => {
+            let dir = schema_dir(worktree.as_deref());
+            let path = dir.join(format!("{host}.json"));
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read cached schema {}", path.display()))?;
+            let value: serde_json::Value =
+                serde_json::from_str(&raw).context("cached schema is not valid JSON")?;
+            print_schema_summary(&host, &value);
+            Ok(())
+        }
+    }
+}
+
+fn schema_dir(worktree: Option<&Path>) -> PathBuf {
+    let base = worktree
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(".zed-http").join("schema")
+}
+
+fn print_schema_summary(host: &str, schema: &serde_json::Value) {
+    println!("Schema for {host}");
+    let query = schema
+        .pointer("/__schema/queryType/name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<none>");
+    let mutation = schema
+        .pointer("/__schema/mutationType/name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<none>");
+    let subscription = schema
+        .pointer("/__schema/subscriptionType/name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<none>");
+    println!("  Query root:        {query}");
+    println!("  Mutation root:     {mutation}");
+    println!("  Subscription root: {subscription}");
+
+    let types = schema
+        .pointer("/__schema/types")
+        .and_then(serde_json::Value::as_array);
+    if let Some(types) = types {
+        println!("  Types:             {}", types.len());
+        if query != "<none>" {
+            print_root_field_count(types, query, "Query fields");
+        }
+        if mutation != "<none>" {
+            print_root_field_count(types, mutation, "Mutation fields");
+        }
+    }
+}
+
+fn print_root_field_count(types: &[serde_json::Value], root_name: &str, label: &str) {
+    let count = types
+        .iter()
+        .find(|ty| ty.get("name").and_then(serde_json::Value::as_str) == Some(root_name))
+        .and_then(|ty| ty.get("fields").and_then(serde_json::Value::as_array))
+        .map(|fields| fields.len())
+        .unwrap_or(0);
+    println!("  {label:<18} {count}");
 }
 
 fn print_issues(file: &Path, issues: &[ValidationIssue]) {
@@ -314,7 +467,15 @@ async fn introspect_command(
             fs::create_dir_all(&dir).with_context(|| {
                 format!("failed to create schema cache directory {}", dir.display())
             })?;
-            dir.join(format!("{}.json", schema_slug(&resolved)))
+            let slug = schema_slug(&resolved.url).unwrap_or_else(|| {
+                resolved
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "schema".to_string())
+                    .to_ascii_lowercase()
+                    .replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+            });
+            dir.join(format!("{slug}.json"))
         }
     };
 
@@ -328,20 +489,6 @@ async fn introspect_command(
 
     println!("Schema cached:\n{}", target.display());
     Ok(())
-}
-
-fn schema_slug(resolved: &ResolvedRequest) -> String {
-    if let Ok(url) = reqwest::Url::parse(&resolved.url) {
-        if let Some(host) = url.host_str() {
-            return host.replace([':', '/'], "-");
-        }
-    }
-    resolved
-        .name
-        .as_deref()
-        .unwrap_or("schema")
-        .to_ascii_lowercase()
-        .replace(|c: char| !c.is_ascii_alphanumeric(), "-")
 }
 
 fn envs_command(file: &Path, worktree: Option<&Path>) -> Result<()> {
@@ -381,11 +528,15 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         (None, None) => RequestSelector::First,
     };
 
+    let resolved = prepare_request(file, &contents, selector, env, worktree)
+        .with_context(|| format!("failed to prepare request from {}", file.display()))?;
+
     if !no_validate {
         let parsed = parse_request_file(&contents)
             .with_context(|| format!("failed to parse {}", file.display()))?;
         let selected = select_block_for_validation(&parsed, name, line)?;
-        let issues = validate_request(selected);
+        let schema = load_cached_schema(file, worktree, &resolved.url);
+        let issues = validate_request_with_schema(selected, schema.as_ref());
         if !issues.is_empty() {
             print_issues(file, &issues);
             anyhow::bail!(
@@ -393,9 +544,6 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
             );
         }
     }
-
-    let resolved = prepare_request(file, &contents, selector, env, worktree)
-        .with_context(|| format!("failed to prepare request from {}", file.display()))?;
 
     if verbose {
         let masked_variables = mask_variables(&resolved.variables);

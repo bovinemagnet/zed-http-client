@@ -251,6 +251,17 @@ fn apply_option(
         "connection-timeout" => {
             options.connection_timeout_ms = Some(parse_duration_ms(directive, line)?);
         }
+        "fragments" => {
+            let path =
+                directive
+                    .value
+                    .as_deref()
+                    .ok_or_else(|| HttpClientError::InvalidOption {
+                        line,
+                        content: "@fragments requires a path".to_string(),
+                    })?;
+            options.fragment_paths.push(path.to_string());
+        }
         _ => {
             // Unknown directives are ignored, mirroring JetBrains' forward-compatible behaviour.
         }

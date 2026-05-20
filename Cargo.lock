@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2138,6 +2138,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]

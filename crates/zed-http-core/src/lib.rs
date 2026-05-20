@@ -7,6 +7,7 @@ pub mod interpolate;
 pub mod model;
 pub mod output;
 pub mod parser;
+pub mod schema;
 pub mod validate;
 
 pub use env::{list_environments, load_environment, mask_variables, VariableMap};
@@ -15,7 +16,7 @@ pub use executor::{parse_and_select_request, prepare_request, RequestSelector, R
 pub use format::format_request_file;
 pub use graphql::{
     build_graphql_payload, introspection_payload, parse_variable_definitions, render_graphql_json,
-    validate_variables, VariableDefinition, INTROSPECTION_QUERY,
+    render_graphql_json_with_extras, validate_variables, VariableDefinition, INTROSPECTION_QUERY,
 };
 pub use interpolate::{interpolate_text, resolve_variables};
 pub use model::{
@@ -27,4 +28,11 @@ pub use output::{
     ResponseSummary,
 };
 pub use parser::{parse_request_file, select_request_by_line, select_request_by_name};
-pub use validate::{validate_request, validate_request_file, ValidationIssue};
+pub use schema::{
+    cached_schema_path, detect_operation_kind, load_cached_schema, schema_slug,
+    validate_against_schema,
+};
+pub use validate::{
+    validate_request, validate_request_file, validate_request_file_with_schemas,
+    validate_request_with_schema, ValidationIssue,
+};

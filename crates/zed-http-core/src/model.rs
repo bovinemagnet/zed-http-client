@@ -32,6 +32,8 @@ pub struct RequestOptions {
     pub timeout_ms: Option<u64>,
     pub connection_timeout_ms: Option<u64>,
     pub no_redirect: bool,
+    #[serde(default)]
+    pub fragment_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

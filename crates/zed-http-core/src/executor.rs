@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use crate::{
     env::{load_environment, VariableMap},
     error::HttpClientError,
-    graphql::render_graphql_json,
+    graphql::render_graphql_json_with_extras,
     interpolate::{interpolate_text, resolve_variables},
     model::{
         RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions, ResponseRedirect,
@@ -101,7 +101,23 @@ pub fn prepare_request(
         let graphql_body = body.as_deref().ok_or_else(|| {
             HttpClientError::Message("GRAPHQL requests require a body".to_string())
         })?;
-        body = Some(render_graphql_json(graphql_body)?);
+        let mut fragments = String::new();
+        for path in &request.options.fragment_paths {
+            let resolved_path = interpolate_text(path, &variables)?;
+            let fragment_path = base_dir.join(&resolved_path);
+            let contents = fs::read_to_string(&fragment_path).map_err(|err| {
+                HttpClientError::Message(format!(
+                    "failed to read fragment file {}: {err}",
+                    fragment_path.display()
+                ))
+            })?;
+            let interpolated = interpolate_text(&contents, &variables)?;
+            if !fragments.is_empty() {
+                fragments.push_str("\n\n");
+            }
+            fragments.push_str(interpolated.trim_end());
+        }
+        body = Some(render_graphql_json_with_extras(graphql_body, &fragments)?);
         let mut merged_headers = IndexMap::from([
             ("Content-Type".to_string(), "application/json".to_string()),
             ("Accept".to_string(), "application/json".to_string()),
@@ -211,6 +227,37 @@ mod tests {
         let redirect = resolved.response_redirect.unwrap();
         assert_eq!(redirect.path, "./out/last.json");
         assert!(redirect.force_overwrite);
+    }
+
+    #[test]
+    fn includes_fragments_from_referenced_file() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(
+            &request_file,
+            "### Spread\n# @fragments ./fragments.graphql\nGRAPHQL https://example.com/graphql\n\nquery { user { ...UserFragment } }\n\n{}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("fragments.graphql"),
+            "fragment UserFragment on User {\n  id\n  name\n}\n",
+        )
+        .unwrap();
+
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+
+        let payload: serde_json::Value =
+            serde_json::from_str(resolved.body.as_deref().unwrap()).unwrap();
+        let query = payload.get("query").and_then(|v| v.as_str()).unwrap();
+        assert!(query.contains("query { user { ...UserFragment } }"));
+        assert!(query.contains("fragment UserFragment on User"));
     }
 
     #[test]

@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-20
+
+Completes the v0.3 GraphQL productivity tier from the initial PRD with
+schema-aware validation, schema inspection, and fragment inclusion.
+
+### Added
+
+- Schema-aware validation: when a schema is cached at
+  `<base>/.zed-http/schema/<host>.json` (populated by `introspect`), `check`
+  and `run` walk each GRAPHQL request's top-level field selections and flag
+  any field that isn't declared on the schema's root type for the operation
+  kind (`query` / `mutation` / `subscription`). Inline-fragment and
+  fragment-spread selections are deliberately skipped at this fidelity.
+- `zed-http schema list [--worktree <path>]` prints every cached schema
+  under `<base>/.zed-http/schema/` with byte sizes.
+- `zed-http schema show --host <host> [--worktree <path>]` summarises a
+  cached schema: root type names, total type count, and root field counts.
+- `# @fragments <path>` request-option directive concatenates a fragment
+  file (relative to the `.http` file's directory) onto the GraphQL query
+  before sending. Multiple `# @fragments` directives accumulate. Fragment
+  contents are env-variable-interpolated.
+- `zed-http check` now accepts `--env <name>` and `--worktree <path>` so it
+  can resolve request URLs against environment files when picking the
+  matching schema. Requests with unresolved `{{vars}}` in their URL skip
+  schema validation rather than reporting false positives.
+- `zed-http run` schema validation: runs schema-aware checks against the
+  *resolved* request URL after `prepare_request` (so env interpolation is
+  honoured). Opt out with `--no-validate` as before.
+- Public core API: `cached_schema_path`, `load_cached_schema`,
+  `detect_operation_kind`, `schema_slug`, `validate_against_schema`,
+  `validate_request_file_with_schemas`, `validate_request_with_schema`,
+  `render_graphql_json_with_extras`.
+
+### Changed
+
+- `RequestOptions` gained a `fragment_paths: Vec<String>` field; the
+  formatter emits one `# @fragments <path>` line per entry.
+- `zed-http-core` now depends on the `url` crate (for host extraction in
+  the schema slug).
+
 ## [0.2.0] - 2026-05-20
 
 Continues the v0.3 GraphQL productivity tier with schema-free static

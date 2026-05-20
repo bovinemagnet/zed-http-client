@@ -61,7 +61,10 @@ zed-http format --file examples/requests.http              # print canonical for
 zed-http format --file examples/requests.http --in-place   # rewrite in place
 zed-http format --file examples/requests.http --check      # CI-friendly exit code
 zed-http check --file examples/requests.http               # validate without sending
+zed-http check --file examples/requests.http --env dev     # use env for schema lookup
 zed-http introspect --file examples/requests.http --name "GraphQL user query"
+zed-http schema list                                       # cached schemas
+zed-http schema show --host countries.trevorblades.com
 ```
 
 ### Run a request
@@ -109,15 +112,49 @@ cargo run -p zed-http-cli -- envs --file examples/requests.http
 cargo run -p zed-http-cli -- check --file examples/requests.http
 ```
 
-Schema-free static validation. Today it covers:
+Static validation. Today it covers:
 
 - non-empty request URLs
 - GraphQL bodies parse into `{query, variables, operationName}`
 - GraphQL variable definitions on the operation match the JSON variables block
   (required-but-missing, required-but-null, declared-but-extra)
+- Top-level field selections exist on the schema's root type, when a schema
+  is cached at `<base>/.zed-http/schema/<host>.json` (populated by
+  `zed-http introspect`)
 
 `zed-http run` runs the same checks against the selected request before
-sending. Pass `--no-validate` to skip them for ad-hoc debugging.
+sending. Pass `--no-validate` to skip them for ad-hoc debugging. Schema-aware
+checks need a resolvable URL — `check --env <name>` resolves env-file
+interpolation before looking up the cached schema; requests whose URL still
+contains `{{vars}}` after that skip the schema step rather than reporting
+false positives.
+
+### Inspect cached schemas
+
+```bash
+cargo run -p zed-http-cli -- schema list
+cargo run -p zed-http-cli -- schema show --host countries.trevorblades.com
+```
+
+### Include GraphQL fragments from another file
+
+```http
+### Spread
+# @fragments ./fragments.graphql
+GRAPHQL {{host}}/graphql
+
+query GetUser($id: ID!) {
+  user(id: $id) {
+    ...UserFragment
+  }
+}
+
+{ "id": "{{userId}}" }
+```
+
+The fragment file is read relative to the `.http` file, env-variable
+interpolated, and concatenated onto the GraphQL query before sending.
+Multiple `# @fragments` lines accumulate.
 
 ### Format a request file
 
