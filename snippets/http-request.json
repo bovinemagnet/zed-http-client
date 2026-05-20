@@ -1,0 +1,101 @@
+{
+  "GET request": {
+    "prefix": "get",
+    "body": [
+      "### ${1:Request name}",
+      "GET ${2:{{host}}}/${3:path}",
+      "Accept: application/json",
+      "",
+      "$0"
+    ],
+    "description": "IntelliJ-style GET request"
+  },
+  "POST JSON request": {
+    "prefix": "post",
+    "body": [
+      "### ${1:Request name}",
+      "POST ${2:{{host}}}/${3:path}",
+      "Content-Type: application/json",
+      "Accept: application/json",
+      "",
+      "{",
+      "  \"$4\": \"$5\"",
+      "}",
+      "$0"
+    ],
+    "description": "IntelliJ-style POST request with a JSON body"
+  },
+  "PUT JSON request": {
+    "prefix": "put",
+    "body": [
+      "### ${1:Request name}",
+      "PUT ${2:{{host}}}/${3:path}",
+      "Content-Type: application/json",
+      "",
+      "{",
+      "  \"$4\": \"$5\"",
+      "}",
+      "$0"
+    ],
+    "description": "IntelliJ-style PUT request with a JSON body"
+  },
+  "PATCH JSON request": {
+    "prefix": "patch",
+    "body": [
+      "### ${1:Request name}",
+      "PATCH ${2:{{host}}}/${3:path}",
+      "Content-Type: application/json",
+      "",
+      "{",
+      "  \"$4\": \"$5\"",
+      "}",
+      "$0"
+    ],
+    "description": "IntelliJ-style PATCH request with a JSON body"
+  },
+  "DELETE request": {
+    "prefix": "delete",
+    "body": [
+      "### ${1:Request name}",
+      "DELETE ${2:{{host}}}/${3:path}",
+      "Authorization: Bearer ${4:{{token}}}",
+      "",
+      "$0"
+    ],
+    "description": "IntelliJ-style DELETE request"
+  },
+  "GraphQL request": {
+    "prefix": "graphql",
+    "body": [
+      "### ${1:Operation name}",
+      "GRAPHQL ${2:{{host}}}/graphql",
+      "Authorization: Bearer ${3:{{token}}}",
+      "",
+      "${4:query} ${5:OperationName}(\\$${6:id}: ${7:ID!}) {",
+      "  $0",
+      "}",
+      "",
+      "{",
+      "  \"${6:id}\": \"$8\"",
+      "}"
+    ],
+    "description": "IntelliJ-style GRAPHQL request with a variables block"
+  },
+  "In-place variable": {
+    "prefix": "@var",
+    "body": ["@${1:name} = ${2:value}", "$0"],
+    "description": "IntelliJ-style in-place variable declaration"
+  },
+  "Request with options": {
+    "prefix": "options",
+    "body": [
+      "### ${1:Request name}",
+      "# @timeout ${2:5000}",
+      "# @no-redirect",
+      "GET ${3:{{host}}}/${4:path}",
+      "",
+      "$0"
+    ],
+    "description": "Request with timeout and redirect control options"
+  }
+}

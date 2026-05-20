@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use indexmap::IndexMap;
 
@@ -7,9 +7,19 @@ use crate::{
     error::HttpClientError,
     graphql::render_graphql_json,
     interpolate::{interpolate_text, resolve_variables},
-    model::{RequestBlock, RequestFile, RequestMethod},
-    parser::{parse_request_file, select_request_by_line},
+    model::{
+        RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions, ResponseRedirect,
+    },
+    parser::{parse_request_file, select_request_by_line, select_request_by_name},
 };
+
+#[derive(Debug, Clone, Default)]
+pub enum RequestSelector<'a> {
+    #[default]
+    First,
+    Line(usize),
+    Name(&'a str),
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRequest {
@@ -19,20 +29,25 @@ pub struct ResolvedRequest {
     pub url: String,
     pub headers: IndexMap<String, String>,
     pub body: Option<String>,
+    pub options: RequestOptions,
+    pub response_redirect: Option<ResponseRedirect>,
     pub variables: VariableMap,
     pub range_start_line: usize,
 }
 
 pub fn parse_and_select_request(
     contents: &str,
-    line: Option<usize>,
+    selector: RequestSelector<'_>,
 ) -> Result<(RequestFile, RequestBlock), HttpClientError> {
     let request_file = parse_request_file(contents)?;
-    let request = match line {
-        Some(line) => select_request_by_line(&request_file, line)
+    let request = match selector {
+        RequestSelector::Line(line) => select_request_by_line(&request_file, line)
             .cloned()
             .ok_or(HttpClientError::NoRequestForLine(line))?,
-        None => request_file
+        RequestSelector::Name(name) => select_request_by_name(&request_file, name)
+            .cloned()
+            .ok_or_else(|| HttpClientError::NoRequestForName(name.to_string()))?,
+        RequestSelector::First => request_file
             .requests
             .first()
             .cloned()
@@ -45,11 +60,11 @@ pub fn parse_and_select_request(
 pub fn prepare_request(
     http_file: &Path,
     contents: &str,
-    line: Option<usize>,
+    selector: RequestSelector<'_>,
     env_name: Option<&str>,
     worktree_root: Option<&Path>,
 ) -> Result<ResolvedRequest, HttpClientError> {
-    let (request_file, request) = parse_and_select_request(contents, line)?;
+    let (request_file, request) = parse_and_select_request(contents, selector)?;
     let mut variables = load_environment(http_file, worktree_root, env_name)?;
     for variable in request_file.variables {
         variables.insert(variable.name, variable.value);
@@ -65,8 +80,20 @@ pub fn prepare_request(
         );
     }
 
-    let mut body = match request.body.as_deref() {
-        Some(body) => Some(interpolate_text(body, &variables)?),
+    let base_dir = http_file.parent().unwrap_or_else(|| Path::new("."));
+    let mut body = match request.body.as_ref() {
+        Some(RequestBody::Inline(text)) => Some(interpolate_text(text, &variables)?),
+        Some(RequestBody::FromFile { path }) => {
+            let resolved_path = interpolate_text(path, &variables)?;
+            let target = base_dir.join(&resolved_path);
+            let contents = fs::read_to_string(&target).map_err(|err| {
+                HttpClientError::Message(format!(
+                    "failed to read request body file {}: {err}",
+                    target.display()
+                ))
+            })?;
+            Some(interpolate_text(&contents, &variables)?)
+        }
         None => None,
     };
 
@@ -85,6 +112,17 @@ pub fn prepare_request(
         headers = merged_headers;
     }
 
+    let response_redirect = match request.response_redirect {
+        Some(ResponseRedirect {
+            path,
+            force_overwrite,
+        }) => Some(ResponseRedirect {
+            path: interpolate_text(&path, &variables)?,
+            force_overwrite,
+        }),
+        None => None,
+    };
+
     Ok(ResolvedRequest {
         name: request.name,
         method: request.method.clone(),
@@ -92,6 +130,8 @@ pub fn prepare_request(
         url,
         headers,
         body,
+        options: request.options,
+        response_redirect,
         variables,
         range_start_line: request.range.start_line,
     })
@@ -117,6 +157,60 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zed-http-client-executor-test-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_body_from_referenced_file_and_interpolates_it() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(
+            &request_file,
+            "### Create user\nPOST https://example.com/users\nContent-Type: application/json\n\n< ./payload.json\n",
+        )
+        .unwrap();
+        fs::write(dir.join("payload.json"), "{\"name\": \"{{name}}\"}").unwrap();
+        fs::write(
+            dir.join("http-client.env.json"),
+            r#"{ "dev": { "name": "Alice" } }"#,
+        )
+        .unwrap();
+
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            Some("dev"),
+            Some(&dir),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.body.as_deref(), Some("{\"name\": \"Alice\"}"));
+    }
+
+    #[test]
+    fn carries_request_options_and_response_redirect() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(
+            &request_file,
+            "### Configured\n# @timeout 1000\n# @no-redirect\nGET https://example.com\n\n>>! ./out/last.json\n",
+        )
+        .unwrap();
+
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.options.timeout_ms, Some(1000));
+        assert!(resolved.options.no_redirect);
+        let redirect = resolved.response_redirect.unwrap();
+        assert_eq!(redirect.path, "./out/last.json");
+        assert!(redirect.force_overwrite);
     }
 
     #[test]
@@ -168,7 +262,7 @@ query GetUser($id: ID!) {
         let resolved = prepare_request(
             &request_file,
             &fs::read_to_string(&request_file).unwrap(),
-            Some(4),
+            RequestSelector::Line(4),
             Some("dev"),
             Some(&dir),
         )

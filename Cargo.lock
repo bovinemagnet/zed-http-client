@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-cli"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-core"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "chrono",

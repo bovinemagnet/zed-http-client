@@ -32,6 +32,18 @@ Content-Type: application/json
 DELETE {{host}}/api/users/123
 Authorization: Bearer {{token}}
 
+### Slow upload with options
+# @timeout 5000
+# @connection-timeout 1000
+# @no-redirect
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+< ./create-user.json
+
+>>! ./.zed-http/last-create-user.json
+
 ### GraphQL user query
 GRAPHQL {{host}}/graphql
 Authorization: Bearer {{token}}

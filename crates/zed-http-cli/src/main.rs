@@ -1,16 +1,17 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use reqwest::{header::CONTENT_TYPE, Method};
+use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
 use serde_json::json;
 use zed_http_core::{
     build_preview, format_pretty_response, list_environments, mask_variables, parse_request_file,
-    prepare_request, response_root, save_response, ResponseSummary,
+    prepare_request, response_root, save_response, RequestSelector, ResolvedRequest,
+    ResponseSummary,
 };
 
 #[derive(Debug, Parser)]
@@ -29,10 +30,12 @@ enum Commands {
     Run {
         #[arg(long)]
         file: PathBuf,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "name")]
         line: Option<usize>,
         #[arg(long)]
         column: Option<usize>,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         env: Option<String>,
         #[arg(long)]
@@ -69,6 +72,7 @@ async fn main() -> Result<()> {
             file,
             line,
             column: _,
+            name,
             env,
             worktree,
             output,
@@ -77,6 +81,7 @@ async fn main() -> Result<()> {
             run_command(
                 &file,
                 line,
+                name.as_deref(),
                 env.as_deref(),
                 worktree.as_deref(),
                 output,
@@ -92,7 +97,8 @@ async fn main() -> Result<()> {
 fn list_command(file: &Path) -> Result<()> {
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
-    let request_file = parse_request_file(&contents)?;
+    let request_file = parse_request_file(&contents)
+        .with_context(|| format!("failed to parse {}", file.display()))?;
 
     for (index, request) in request_file.requests.iter().enumerate() {
         let name = request.name.as_deref().unwrap_or("Unnamed request");
@@ -118,6 +124,7 @@ fn envs_command(file: &Path, worktree: Option<&Path>) -> Result<()> {
 async fn run_command(
     file: &Path,
     line: Option<usize>,
+    name: Option<&str>,
     env: Option<&str>,
     worktree: Option<&Path>,
     output_mode: OutputMode,
@@ -125,7 +132,13 @@ async fn run_command(
 ) -> Result<()> {
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
-    let resolved = prepare_request(file, &contents, line, env, worktree)?;
+    let selector = match (name, line) {
+        (Some(name), _) => RequestSelector::Name(name),
+        (None, Some(line)) => RequestSelector::Line(line),
+        (None, None) => RequestSelector::First,
+    };
+    let resolved = prepare_request(file, &contents, selector, env, worktree)
+        .with_context(|| format!("failed to prepare request from {}", file.display()))?;
 
     if verbose {
         let masked_variables = mask_variables(&resolved.variables);
@@ -153,7 +166,7 @@ async fn run_command(
         println!();
     }
 
-    let client = reqwest::Client::new();
+    let client = build_client(&resolved)?;
     let method = Method::from_bytes(resolved.http_method.as_bytes())?;
     let mut request = client.request(method, &resolved.url);
     for (name, value) in &resolved.headers {
@@ -182,6 +195,10 @@ async fn run_command(
         content_type.as_deref(),
         &body_text,
     )?;
+    let redirect_path = match resolved.response_redirect.as_ref() {
+        Some(redirect) => Some(write_response_redirect(file, redirect, &body_text)?),
+        None => None,
+    };
     let preview = build_preview(content_type.as_deref(), &body_text);
     let summary = ResponseSummary {
         status: format!(
@@ -198,7 +215,12 @@ async fn run_command(
     };
 
     match output_mode {
-        OutputMode::Pretty => print!("{}", format_pretty_response(&resolved, &summary)),
+        OutputMode::Pretty => {
+            print!("{}", format_pretty_response(&resolved, &summary));
+            if let Some(path) = &redirect_path {
+                println!("Response redirect:\n{}", path.display());
+            }
+        }
         OutputMode::Raw => print!("{}", body_text),
         OutputMode::Json => {
             let body_value = serde_json::from_str::<serde_json::Value>(&body_text)
@@ -215,6 +237,7 @@ async fn run_command(
                     "duration_ms": summary.duration_ms,
                     "content_type": summary.content_type,
                     "saved_path": summary.saved_path,
+                    "redirect_path": redirect_path,
                     "body": body_value,
                 }
             });
@@ -223,4 +246,48 @@ async fn run_command(
     }
 
     Ok(())
+}
+
+fn build_client(resolved: &ResolvedRequest) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(ms) = resolved.options.timeout_ms {
+        builder = builder.timeout(Duration::from_millis(ms));
+    }
+    if let Some(ms) = resolved.options.connection_timeout_ms {
+        builder = builder.connect_timeout(Duration::from_millis(ms));
+    }
+    if resolved.options.no_redirect {
+        builder = builder.redirect(Policy::none());
+    }
+    builder
+        .build()
+        .context("failed to build HTTP client with request options")
+}
+
+fn write_response_redirect(
+    http_file: &Path,
+    redirect: &zed_http_core::ResponseRedirect,
+    body: &str,
+) -> Result<PathBuf> {
+    let base_dir = http_file.parent().unwrap_or_else(|| Path::new("."));
+    let target = base_dir.join(&redirect.path);
+    if target.exists() && !redirect.force_overwrite {
+        anyhow::bail!(
+            "response redirect target {} already exists; use >>! to force overwrite",
+            target.display()
+        );
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create response redirect directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(&target, body)
+        .with_context(|| format!("failed to write response redirect to {}", target.display()))?;
+    Ok(target)
 }

@@ -21,8 +21,38 @@ pub struct RequestBlock {
     pub method: RequestMethod,
     pub url: String,
     pub headers: Vec<Header>,
-    pub body: Option<String>,
+    pub body: Option<RequestBody>,
+    pub options: RequestOptions,
+    pub response_redirect: Option<ResponseRedirect>,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestOptions {
+    pub timeout_ms: Option<u64>,
+    pub connection_timeout_ms: Option<u64>,
+    pub no_redirect: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RequestBody {
+    Inline(String),
+    FromFile { path: String },
+}
+
+impl RequestBody {
+    pub fn as_inline(&self) -> Option<&str> {
+        match self {
+            Self::Inline(text) => Some(text),
+            Self::FromFile { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseRedirect {
+    pub path: String,
+    pub force_overwrite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -54,6 +54,7 @@ The workspace builds a binary named `zed-http`.
 ```bash
 zed-http run --file examples/requests.http --line 1
 zed-http run --file examples/requests.http --line 20 --env dev
+zed-http run --file examples/requests.http --name "Create user" --env dev
 zed-http list --file examples/requests.http
 zed-http envs --file examples/requests.http
 ```
@@ -67,6 +68,7 @@ cargo run -p zed-http-cli -- run   --file examples/requests.http   --line 4   --
 Useful options:
 
 - `--line <number>`: 1-based line number used to select the containing request block
+- `--name <name>`: selects the request whose `###` heading matches (case-insensitive). Mutually exclusive with `--line`
 - `--column <number>`: reserved for future use
 - `--env <name>`: selects values from `http-client.env.json` and `http-client.private.env.json`
 - `--worktree <path>`: stops environment lookup at the provided directory
@@ -177,8 +179,28 @@ The initial parser intentionally focuses on the most common primitives:
 - `GRAPHQL` requests that are executed as HTTP `POST`
 - headers in `Name: Value` form
 - blank-line-separated request bodies
+- bodies sourced from a file using `< ./path.json`
+- response redirects using `>> ./path` (refuses to overwrite) and `>>! ./path` (force overwrite)
+- per-request options as `# @timeout <ms>`, `# @connection-timeout <ms>`, `# @no-redirect`
 - in-file variables like `@host = http://localhost:8080`
 - interpolation using `{{variableName}}`
+
+Example combining the new directives:
+
+```http
+### Slow upload
+# @timeout 5000
+# @connection-timeout 1000
+# @no-redirect
+POST {{host}}/api/users
+Content-Type: application/json
+
+< ./create-user.json
+
+>>! ./.zed-http/last-create-user.json
+```
+
+Paths after `<`, `>>`, and `>>!` are resolved relative to the directory containing the request file.
 
 ## Supported GraphQL syntax
 
@@ -240,7 +262,7 @@ File extensions are inferred from the response content type when possible.
 
 ## Current limitations
 
-Not implemented in v0.1:
+Not implemented yet:
 
 - multipart forms
 - request scripts

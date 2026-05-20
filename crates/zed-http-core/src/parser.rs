@@ -1,6 +1,9 @@
 use crate::{
     error::HttpClientError,
-    model::{Header, InPlaceVariable, RequestBlock, RequestFile, RequestMethod, SourceRange},
+    model::{
+        Header, InPlaceVariable, RequestBlock, RequestBody, RequestFile, RequestMethod,
+        RequestOptions, ResponseRedirect, SourceRange,
+    },
 };
 
 type NumberedLine<'a> = (usize, &'a str);
@@ -66,6 +69,17 @@ pub fn select_request_by_line(file: &RequestFile, line: usize) -> Option<&Reques
         .find(|request| request.range.start_line <= line && line <= request.range.end_line)
 }
 
+pub fn select_request_by_name<'a>(file: &'a RequestFile, name: &str) -> Option<&'a RequestBlock> {
+    let needle = name.trim();
+    file.requests.iter().find(|request| {
+        request
+            .name
+            .as_deref()
+            .map(|candidate| candidate.eq_ignore_ascii_case(needle))
+            .unwrap_or(false)
+    })
+}
+
 fn parse_variables(lines: &[NumberedLine<'_>]) -> Vec<InPlaceVariable> {
     lines
         .iter()
@@ -101,9 +115,20 @@ fn parse_section(
     name: Option<String>,
 ) -> Result<Option<RequestBlock>, HttpClientError> {
     let mut cursor = 0usize;
+    let mut options = RequestOptions::default();
     while cursor < lines.len() {
-        let (_, line) = lines[cursor];
-        if line.trim().is_empty() || is_comment(line) {
+        let (line_no, line) = lines[cursor];
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            cursor += 1;
+            continue;
+        }
+        if let Some(directive) = parse_option_directive(line) {
+            apply_option(&mut options, &directive, line_no)?;
+            cursor += 1;
+            continue;
+        }
+        if is_comment(line) {
             cursor += 1;
             continue;
         }
@@ -137,6 +162,10 @@ fn parse_section(
             cursor += 1;
             break;
         }
+        if is_comment(line) {
+            cursor += 1;
+            continue;
+        }
         if let Some((header_name, header_value)) = line.split_once(':') {
             headers.push(Header {
                 name: header_name.trim().to_string(),
@@ -147,26 +176,16 @@ fn parse_section(
         cursor += 1;
     }
 
-    let body_lines = trim_blank_body_lines(&lines[cursor..]);
-    let end_line = body_lines
-        .last()
+    let tail = trim_blank_body_lines(&lines[cursor..]);
+    let (body_lines, redirect) = split_off_response_redirect(tail)?;
+    let body = build_body(body_lines)?;
+    let end_line = redirect
+        .as_ref()
         .map(|(line_no, _)| *line_no)
+        .or_else(|| body_lines.last().map(|(line_no, _)| *line_no))
         .or_else(|| headers.last().map(|header| header.line))
         .unwrap_or(request_line_no);
-    let body = if body_lines.is_empty() {
-        None
-    } else {
-        Some(
-            body_lines
-                .iter()
-                .map(|(_, line)| *line)
-                .collect::<Vec<_>>()
-                .join(
-                    "
-",
-                ),
-        )
-    };
+    let response_redirect = redirect.map(|(_, value)| value);
 
     Ok(Some(RequestBlock {
         name,
@@ -174,11 +193,156 @@ fn parse_section(
         url,
         headers,
         body,
+        options,
+        response_redirect,
         range: SourceRange {
             start_line: request_line_no,
             end_line,
         },
     }))
+}
+
+#[derive(Debug, Clone)]
+struct OptionDirective {
+    name: String,
+    value: Option<String>,
+}
+
+fn parse_option_directive(line: &str) -> Option<OptionDirective> {
+    let trimmed = line.trim_start();
+    let stripped = trimmed
+        .strip_prefix('#')
+        .or_else(|| trimmed.strip_prefix("//"))?;
+    if stripped.starts_with('#') {
+        // ### request separator, not a directive
+        return None;
+    }
+    let body = stripped.trim_start();
+    let body = body.strip_prefix('@')?;
+    let (name, rest) = match body.split_once(char::is_whitespace) {
+        Some((name, rest)) => (name, rest.trim()),
+        None => (body, ""),
+    };
+    if name.is_empty() {
+        return None;
+    }
+    Some(OptionDirective {
+        name: name.to_ascii_lowercase(),
+        value: if rest.is_empty() {
+            None
+        } else {
+            Some(rest.to_string())
+        },
+    })
+}
+
+fn apply_option(
+    options: &mut RequestOptions,
+    directive: &OptionDirective,
+    line: usize,
+) -> Result<(), HttpClientError> {
+    match directive.name.as_str() {
+        "no-redirect" => {
+            options.no_redirect = true;
+        }
+        "timeout" => {
+            options.timeout_ms = Some(parse_duration_ms(directive, line)?);
+        }
+        "connection-timeout" => {
+            options.connection_timeout_ms = Some(parse_duration_ms(directive, line)?);
+        }
+        _ => {
+            // Unknown directives are ignored, mirroring JetBrains' forward-compatible behaviour.
+        }
+    }
+    Ok(())
+}
+
+fn parse_duration_ms(directive: &OptionDirective, line: usize) -> Result<u64, HttpClientError> {
+    let raw = directive
+        .value
+        .as_deref()
+        .ok_or_else(|| HttpClientError::InvalidOption {
+            line,
+            content: format!("@{} requires a millisecond value", directive.name),
+        })?;
+    raw.parse::<u64>()
+        .map_err(|_| HttpClientError::InvalidOption {
+            line,
+            content: format!(
+                "@{} expected a millisecond integer, got '{}'",
+                directive.name, raw
+            ),
+        })
+}
+
+type RedirectMatch = Option<(usize, ResponseRedirect)>;
+type BodyAndRedirect<'a> = (&'a [NumberedLine<'a>], RedirectMatch);
+
+fn split_off_response_redirect<'a>(
+    tail: &'a [NumberedLine<'a>],
+) -> Result<BodyAndRedirect<'a>, HttpClientError> {
+    let last_redirect = tail
+        .iter()
+        .rposition(|(_, line)| line.trim_start().starts_with(">>"));
+    let Some(idx) = last_redirect else {
+        return Ok((tail, None));
+    };
+    let (line_no, raw) = tail[idx];
+    let parsed = parse_response_redirect(raw).ok_or_else(|| HttpClientError::InvalidOption {
+        line: line_no,
+        content: format!("invalid response redirect: {raw}"),
+    })?;
+    let body_lines = trim_blank_body_lines(&tail[..idx]);
+    Ok((body_lines, Some((line_no, parsed))))
+}
+
+fn parse_response_redirect(line: &str) -> Option<ResponseRedirect> {
+    let trimmed = line.trim_start();
+    let (rest, force) = if let Some(rest) = trimmed.strip_prefix(">>!") {
+        (rest, true)
+    } else if let Some(rest) = trimmed.strip_prefix(">>") {
+        (rest, false)
+    } else {
+        return None;
+    };
+    let path = rest.trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some(ResponseRedirect {
+        path: path.to_string(),
+        force_overwrite: force,
+    })
+}
+
+fn build_body(body_lines: &[NumberedLine<'_>]) -> Result<Option<RequestBody>, HttpClientError> {
+    if body_lines.is_empty() {
+        return Ok(None);
+    }
+    let first_non_blank = body_lines.iter().find(|(_, line)| !line.trim().is_empty());
+    if let Some((_, first)) = first_non_blank {
+        if let Some(path) = first.trim_start().strip_prefix('<') {
+            let path = path.trim();
+            if !path.is_empty()
+                && body_lines
+                    .iter()
+                    .filter(|(_, line)| !line.trim().is_empty())
+                    .count()
+                    == 1
+            {
+                return Ok(Some(RequestBody::FromFile {
+                    path: path.to_string(),
+                }));
+            }
+        }
+    }
+    let joined = body_lines
+        .iter()
+        .map(|(_, line)| *line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Some(RequestBody::Inline(joined)))
 }
 
 fn trim_blank_body_lines<'a>(lines: &'a [NumberedLine<'a>]) -> &'a [NumberedLine<'a>] {
@@ -261,8 +425,85 @@ Content-Type: application/json
         assert!(file.requests[0]
             .body
             .as_ref()
+            .and_then(RequestBody::as_inline)
             .unwrap()
             .contains("\"Alice\""));
+    }
+
+    #[test]
+    fn parses_request_options_and_skips_unknown_ones() {
+        let input = "### Configured\n# @timeout 1500\n# @connection-timeout 250\n# @no-redirect\n# @future-option ignored\nGET https://example.com\n";
+        let file = parse_request_file(input).unwrap();
+
+        let options = &file.requests[0].options;
+        assert_eq!(options.timeout_ms, Some(1500));
+        assert_eq!(options.connection_timeout_ms, Some(250));
+        assert!(options.no_redirect);
+    }
+
+    #[test]
+    fn rejects_non_integer_timeout() {
+        let input = "### Bad\n# @timeout fast\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, .. } => assert_eq!(line, 2),
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_body_from_file_directive() {
+        let input = "### From file\nPOST https://example.com\nContent-Type: application/json\n\n< ./body.json\n";
+        let file = parse_request_file(input).unwrap();
+
+        match file.requests[0].body.as_ref().unwrap() {
+            RequestBody::FromFile { path } => assert_eq!(path, "./body.json"),
+            other => panic!("expected FromFile body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_response_redirect_with_force() {
+        let input = "### With redirect\nGET https://example.com\n\n>>! ./out/last.json\n";
+        let file = parse_request_file(input).unwrap();
+
+        let redirect = file.requests[0].response_redirect.as_ref().unwrap();
+        assert_eq!(redirect.path, "./out/last.json");
+        assert!(redirect.force_overwrite);
+        assert!(file.requests[0].body.is_none());
+    }
+
+    #[test]
+    fn keeps_body_separate_from_response_redirect() {
+        let input = "### Mixed\nPOST https://example.com\nContent-Type: application/json\n\n{\"name\": \"Alice\"}\n\n>> ./out.json\n";
+        let file = parse_request_file(input).unwrap();
+
+        let body = file.requests[0]
+            .body
+            .as_ref()
+            .and_then(RequestBody::as_inline)
+            .unwrap();
+        assert!(body.contains("Alice"));
+        let redirect = file.requests[0].response_redirect.as_ref().unwrap();
+        assert_eq!(redirect.path, "./out.json");
+        assert!(!redirect.force_overwrite);
+    }
+
+    #[test]
+    fn selects_request_by_name_ignoring_case_and_padding() {
+        let input =
+            "### One\nGET https://example.com/one\n\n### Two\nGET https://example.com/two\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(
+            select_request_by_name(&file, "  one  ").unwrap().url,
+            "https://example.com/one"
+        );
+        assert_eq!(
+            select_request_by_name(&file, "TWO").unwrap().url,
+            "https://example.com/two"
+        );
+        assert!(select_request_by_name(&file, "missing").is_none());
     }
 
     #[test]

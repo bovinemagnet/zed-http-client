@@ -1,6 +1,6 @@
 id = "http-client"
 name = "HTTP Client"
-version = "0.1.0"
+version = "0.0.3"
 schema_version = 1
 authors = ["Paul Snow <bovinemagnet@gmail.com>"]
 description = "Run IntelliJ-compatible HTTP and GraphQL request files from Zed"
