@@ -1,13 +1,21 @@
 name: Release
 
-# Fires when a maintainer pushes an annotated `v*` tag (e.g. `v0.4.6`).
-# Builds the `zed-http` binary for the five supported targets, packages
-# each one (tar.gz on Unix, zip on Windows), and attaches the artefacts
-# to a GitHub Release whose body is the tag's annotation.
+# Fires when a maintainer pushes an annotated `v*` tag (e.g. `v0.4.8`).
+# Two jobs:
+#
+#   1. create-release  — runs once on ubuntu-latest, creates the
+#      GitHub Release using the tag's annotation as the body. This must
+#      complete before the matrix uploads anything, otherwise the
+#      taiki-e action sees "release not found" and gives up.
+#
+#   2. build           — matrix over five targets, builds zed-http, and
+#      attaches each archive + SHA-256 sidecar to the release.
 #
 # All inputs to this workflow are either hardcoded in the matrix below
-# or come from secrets.GITHUB_TOKEN — no untrusted event payloads are
-# interpolated into run: commands.
+# or come from secrets.GITHUB_TOKEN — no untrusted event payload is
+# interpolated into any run: command. The only template inputs are
+# matrix.target and matrix.os (hardcoded include entries) and
+# github.ref_name, which is the tag name we ourselves push.
 on:
   push:
     tags:
@@ -17,8 +25,35 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Fetch tags + their annotations so --notes-from-tag works.
+        with:
+          fetch-depth: 0
+
+      - name: Create release from tag annotation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Idempotent: if a maintainer re-runs the workflow against
+          # the same tag (e.g. after a transient failure), don't fail
+          # just because the release already exists.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping create."
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-from-tag \
+              --verify-tag
+          fi
+
   build:
     name: ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,7 +98,7 @@ jobs:
           archive: zed-http-$target
           tar: unix
           zip: windows
-          # SHA256 sidecar per artefact.
+          # SHA-256 sidecar per artefact.
           checksum: sha256
           # Only the CLI crate ships a binary.
           manifest_path: crates/zed-http-cli/Cargo.toml
