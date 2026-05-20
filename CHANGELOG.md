@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-05-20
+
+Adds curl import. Paste the "Copy as cURL" output from browser devtools
+and get a canonical `.http` block back, ready to drop into any file.
+
+### Added
+
+- `zed-http import curl` translates a curl command into a single-request
+  `.http` block. Three input shapes:
+  - Inline positional argument: `zed-http import curl 'curl https://...'`.
+  - From a file: `zed-http import curl --file paste.txt`.
+  - From stdin: `pbpaste | zed-http import curl --stdin`.
+  - `--out <path>` writes the result to a file (default stdout).
+  - `--name <name>` overrides the imported request's name.
+- Recognised curl flags: `-X` / `--request`, `-H` / `--header`,
+  `-d` / `--data` / `--data-raw` / `--data-binary` / `--data-ascii` /
+  `--data-urlencode`, `-u` / `--user` (base64-encoded into a
+  `Authorization: Basic ...` header), `-A` / `--user-agent`,
+  `-e` / `--referer`, `-b` / `--cookie` (multiple `-b` flags concatenate
+  into one `Cookie:` header), `-G` / `--get` (moves `-d` data into the
+  query string), `--url`, the bare URL, and backslash line continuations
+  for multi-line shapes from Chrome/Firefox devtools.
+- Acceptable but ignored: `--compressed`, `-L` / `--location`,
+  `-s` / `--silent`, `-k` / `--insecure`, `-v` / `--verbose`, etc.
+- Multipart (`-F` / `--form`) is recognised but the body is skipped
+  with a note in the request name — the runtime doesn't render
+  multipart yet (deferred to v0.5).
+- `-d @path` syntax becomes a `< ./path` body-from-file directive.
+- `--data-urlencode` values are percent-encoded with the
+  `name=value & special chars` shape expected by web APIs.
+- Public core API: `import_curl` (in new `curl` module), re-exported at
+  the crate root.
+
+### Diagnostics
+
+- Unterminated quoted strings in the input emit `curl command had an
+  unterminated quoted string`.
+- Unknown HTTP methods passed to `-X` error with `curl -X used an
+  unknown HTTP method '<text>'`.
+- Missing URL emits `curl command had no URL`.
+
 ## [0.4.2] - 2026-05-20
 
 Two practical additions for everyday use: IntelliJ-style dynamic

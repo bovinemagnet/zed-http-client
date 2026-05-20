@@ -23,7 +23,7 @@ zed-http <subcommand> --help
 * xref:#format[format] — re-emit a file in canonical layout
 * xref:#introspect[introspect] — run a GraphQL introspection query and cache the schema
 * xref:#schema[schema] — inspect cached schemas
-* xref:#import[import] — translate a Postman v2.1 collection into a `.http` file
+* xref:#import[import] — translate a Postman v2.1 collection or a curl command into a `.http` file
 
 ---
 
@@ -717,6 +717,121 @@ Non-zero when the collection file cannot be read or is not a valid Postman v2.1 
 ----
 zed-http import postman --file exports/my-api.postman_collection.json \
                         --out api/my-api.http
+----
+
+---
+
+[[import-curl]]
+=== zed-http import curl
+
+==== Synopsis
+
+[source,bash]
+----
+zed-http import curl ['<curl command>']
+                     [--file <path>]
+                     [--stdin]
+                     [--out <path>]
+                     [--name "<name>"]
+----
+
+==== Description
+
+Translates a `curl` command into a single canonical `.http` request block.
+The primary use-case is the *Copy as cURL* action in browser devtools: paste the output (including multi-line backslash continuations) and receive a `.http` block suitable for `zed-http run` or `zed-http run-all`.
+
+Input is accepted in exactly one of three mutually exclusive shapes — positional argument, `--file`, or `--stdin`.
+Passing more than one at once is rejected by the argument parser.
+When no input shape is provided the command exits with an error explaining the three options.
+
+Without `--out` the result is written to stdout so it can be previewed or redirected.
+When `--out` is given the parent directory is created automatically and a confirmation line is printed to stderr.
+
+Recognised flags cover the set that devtools actually emit: `-X` / `--request`, `-H` / `--header`, `-d` / `--data` / `--data-raw` / `--data-binary` / `--data-ascii`, `--data-urlencode`, `-u` / `--user`, `-A` / `--user-agent`, `-e` / `--referer`, `-b` / `--cookie`, `-G` / `--get`, and the bare URL.
+Cosmetic flags (`--compressed`, `-L`, `-s`, `-k`, `-v`, `--http2`, etc.) are silently consumed.
+Multipart (`-F` / `--form`) is recognised but the body is dropped with a `TODO` note in the request name.
+
+See xref:curl-import.adoc[curl command import] for a full walkthrough with worked examples.
+
+==== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`[CURL_COMMAND]`
+|string, optional
+|The curl command as a positional argument (quoted).
+ Conflicts with `--file` and `--stdin`.
+
+|`--file <path>`
+|path, optional
+|Read the curl command from a file.
+ Conflicts with the positional argument and `--stdin`.
+
+|`--stdin`
+|flag
+|Read the curl command from stdin.
+ Conflicts with the positional argument and `--file`.
+
+|`--out <path>`
+|path, optional
+|Write the resulting `.http` content to this path (parent directories are created).
+ Defaults to stdout.
+
+|`--name "<name>"`
+|string, optional
+|Override the imported request name.
+ Defaults to `Imported from curl`.
+|===
+
+==== Exit codes
+
+Non-zero when:
+
+* No input shape is provided.
+* Two conflicting input shapes are provided simultaneously.
+* The curl command contains an unterminated quoted string.
+* An explicit `-X` value is not a recognised HTTP method.
+* No URL can be found in the curl command.
+
+==== Example
+
+[source,bash]
+----
+# Inline positional argument
+zed-http import curl 'curl https://api.example.com/health' \
+  --name "Health check" \
+  --out api/health.http
+
+# From clipboard on macOS, written to stdout
+pbpaste | zed-http import curl --stdin
+
+# From a saved file
+zed-http import curl --file paste.txt --out api/orders.http
+----
+
+Multi-line devtools paste (backslash continuations are handled transparently):
+
+[source,bash]
+----
+zed-http import curl \
+  'curl "https://api.example.com/api/orders" \
+    -H "accept: application/json" \
+    -H "content-type: application/json" \
+    --data-raw "{\"item\":\"widget\",\"qty\":3}"'
+----
+
+Expected output:
+
+[source,asciidoc]
+----
+### Imported from curl
+POST https://api.example.com/api/orders
+accept: application/json
+content-type: application/json
+
+{"item":"widget","qty":3}
 ----
 
 ---

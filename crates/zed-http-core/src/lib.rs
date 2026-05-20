@@ -33,9 +33,12 @@
 //!   directories.
 //! - [`postman`] — translates Postman v2.1 collection JSON into a
 //!   [`model::RequestFile`] for use with the formatter.
+//! - [`curl`] — translates a `curl` command (the "Copy as cURL" shape
+//!   from browser devtools) into a single-request [`model::RequestFile`].
 //! - [`error`] — single [`error::HttpClientError`] type returned everywhere.
 
 pub mod assertion;
+pub mod curl;
 pub mod dynamic;
 pub mod env;
 pub mod error;
@@ -51,6 +54,7 @@ pub mod schema;
 pub mod validate;
 
 pub use assertion::{evaluate_assertions, AssertionFailure, AssertionResponse};
+pub use curl::import_curl;
 pub use dynamic::build_dynamic_variables;
 pub use env::{list_environments, load_environment, mask_variables, VariableMap};
 pub use error::HttpClientError;

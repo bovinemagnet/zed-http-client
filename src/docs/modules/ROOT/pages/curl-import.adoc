@@ -1,0 +1,293 @@
+= curl Command Import
+:description: Translating a browser "Copy as cURL" command into a canonical .http block with zed-http import curl.
+
+`zed-http import curl` translates a `curl` command into a single canonical `.http` request block.
+The intended workflow is to select *Copy as cURL* in the Chrome, Firefox, or Safari network panel, paste it straight into a terminal, and get a ready-to-use `.http` file back — no manual editing required.
+
+Output defaults to stdout so the command composes naturally with clipboard utilities and shell redirection:
+
+[source,bash]
+----
+pbpaste | zed-http import curl --stdin > smoke.http
+xclip -o | zed-http import curl --stdin > smoke.http
+----
+
+For importing a whole Postman collection in one step, see xref:postman-import.adoc[Postman collection import].
+
+== Input modes
+
+Three mutually exclusive input shapes are supported.
+Passing more than one at a time is rejected by the CLI with a `conflicts_with` error.
+
+=== Inline positional argument
+
+Pass the curl command as a single quoted string directly on the command line:
+
+[source,bash]
+----
+zed-http import curl 'curl https://api.example.com/health'
+----
+
+This is the most convenient shape for short single-line commands.
+
+=== From a file (`--file`)
+
+Read the curl command from a text file — useful when the command spans many lines and has been saved to disk first:
+
+[source,bash]
+----
+# Save the clipboard contents
+pbpaste > paste.txt
+
+# Import from the saved file
+zed-http import curl --file paste.txt
+----
+
+=== From stdin (`--stdin`)
+
+Pipe the curl command directly from a clipboard utility or another command:
+
+[source,bash]
+----
+pbpaste | zed-http import curl --stdin
+xclip -o | zed-http import curl --stdin
+----
+
+[NOTE]
+====
+Providing two or more input modes at once (for example, both a positional argument and `--file`) is rejected at argument-parsing time with a message such as:
+
+----
+error: the argument '--file <FILE>' cannot be used with '[CURL_COMMAND]'
+----
+====
+
+== Output
+
+By default the resulting `.http` block is written to stdout.
+Use `--out` to write to a file, and `--name` to override the request name.
+
+`--out <path>`::
+  Write the `.http` content to the given file.
+  The parent directory is created automatically if it does not already exist.
+  A confirmation line is printed to stderr:
++
+[source,bash]
+----
+zed-http import curl 'curl https://api.example.com/health' --out api/health.http
+----
++
+----
+Imported 1 request(s) from <inline> → api/health.http
+----
+
+`--name "<name>"`::
+  Override the request name in the output block.
+  When omitted, the name defaults to `Imported from curl`.
++
+[source,bash]
+----
+zed-http import curl 'curl https://api.example.com/health' --name "Health check"
+----
+
+== Supported curl flags
+
+The following flags are recognised and translated into `.http` syntax.
+
+=== Method and URL
+
+`-X <method>` / `--request <method>`::
+  Sets the HTTP method explicitly.
+  Recognised methods are the same set supported by `zed-http`: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`.
+  An unknown method string produces a diagnostic error: `curl -X used an unknown HTTP method '<text>'`.
+
+`--url <url>`::
+  Sets the URL explicitly (alternative form used by some devtools exports).
+
+bare URL argument::
+  Any token that is not a recognised flag is treated as the URL.
+  A missing URL produces a diagnostic error: `curl command had no URL`.
+
+=== Headers
+
+`-H <value>` / `--header <value>`::
+  Repeatable.
+  Each value is split on the first `:` into a header name and value pair.
+  Multiple `-H` flags are all included in the output.
+
+=== Body
+
+`-d <value>` / `--data <value>` / `--data-raw <value>` / `--data-binary <value>` / `--data-ascii <value>`::
+  Sets the request body to the literal value.
+  Multiple occurrences are concatenated with `&`.
+  If the value starts with `@`, the remainder is treated as a file path and becomes a `< ./path` body-from-file directive in the output (see xref:http-file-syntax.adoc#body-from-file[Body from file]).
+
+`--data-urlencode <value>`::
+  Percent-encodes the value portion of a `name=value` pair (the name is kept verbatim) and appends it to the body.
+  Multiple `--data-urlencode` calls are concatenated with `&`.
+  Only unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`) are left unencoded; everything else is `%XX`-escaped.
+
+=== Authentication
+
+`-u <user:pass>` / `--user <user:pass>`::
+  Base64-encodes the `user:pass` string and inserts an `Authorization: Basic <encoded>` header.
+  This header is prepended before any caller-supplied `Authorization` header so the `-u` value takes precedence.
+
+=== Cosmetic headers
+
+`-A <string>` / `--user-agent <string>`::
+  Adds a `User-Agent: <string>` header.
+  Ignored if a `User-Agent` header was already set by an explicit `-H` flag.
+
+`-e <url>` / `--referer <url>`::
+  Adds a `Referer: <url>` header.
+  Ignored if a `Referer` header was already set by an explicit `-H` flag.
+
+=== Cookies
+
+`-b <value>` / `--cookie <value>`::
+  Repeatable.
+  Multiple occurrences are joined with `; ` into a single `Cookie: <all values>` header.
+  The cookie jar managed by `zed-http run` is separate from this mechanism — for session-based flows, see xref:cookies.adoc[Persistent cookies].
+
+=== Method inference from data
+
+When `-d` (or any `--data-*` variant) is present and no explicit `-X` flag is given, the method is inferred as `POST`.
+This matches curl's own default behaviour.
+
+=== `-G` / `--get`
+
+Forces a GET request even when `-d` data flags are present.
+The data values are moved into the URL query string rather than placed in the request body.
+Multiple `-d` values are concatenated with `&` and appended to the URL (using `?` or `&` depending on whether a query string already exists).
+
+=== Acceptable but ignored flags
+
+The following flags are consumed without producing any output — they have no semantic effect for an `.http` file and are silently discarded so that unmodified devtools paste output is accepted without errors:
+
+`--compressed`, `-L` / `--location`, `-s` / `--silent`, `-S` / `--show-error`, `-k` / `--insecure`, `-i` / `--include`, `-v` / `--verbose`, `-f` / `--fail`, `--http2`, `--http1.1`
+
+Unrecognised long flags that are known to take a value (such as `--connect-timeout`, `--max-time`, `--proxy`, `--cert`, `--output`, and similar) are also silently consumed along with their value argument to prevent the value from being mistaken for the URL.
+
+=== Multipart (`-F` / `--form`)
+
+Multipart form fields are recognised but the body content is dropped.
+A note is appended to the request name to make the omission visible:
+
+----
+Imported from curl — TODO: multipart body skipped (curl -F not yet supported)
+----
+
+Full multipart rendering is deferred to a future release.
+See xref:roadmap.adoc[Roadmap and limitations] for the current status.
+
+== Worked examples
+
+=== Simple GET request
+
+[source,bash]
+----
+zed-http import curl 'curl https://example.com/health'
+----
+
+Output:
+
+[source,asciidoc]
+----
+### Imported from curl
+GET https://example.com/health
+----
+
+=== Chrome devtools multi-line POST
+
+This is the exact shape Chrome's *Copy as cURL (bash)* produces:
+
+[source,bash]
+----
+zed-http import curl \
+  'curl "https://api.example.com/api/orders" \
+    -H "accept: application/json" \
+    -H "content-type: application/json" \
+    --data-raw "{\"item\":\"widget\",\"qty\":3}"'
+----
+
+Output:
+
+[source,asciidoc]
+----
+### Imported from curl
+POST https://api.example.com/api/orders
+accept: application/json
+content-type: application/json
+
+{"item":"widget","qty":3}
+----
+
+=== `-G` with multiple `-d` flags (data as query string)
+
+[source,bash]
+----
+zed-http import curl \
+  'curl -G https://api.example.com/search \
+    -d "q=zed editor" \
+    -d "lang=en"'
+----
+
+Output:
+
+[source,asciidoc]
+----
+### Imported from curl
+GET https://api.example.com/search?q=zed editor&lang=en
+----
+
+=== Basic authentication (`-u`)
+
+[source,bash]
+----
+zed-http import curl 'curl -u admin:secret https://api.example.com/protected'
+----
+
+Output:
+
+[source,asciidoc]
+----
+### Imported from curl
+GET https://api.example.com/protected
+Authorization: Basic YWRtaW46c2VjcmV0
+----
+
+The value `YWRtaW46c2VjcmV0` is the standard Base64 encoding of `admin:secret`.
+
+== Limitations
+
+* *Multipart bodies* (`-F` / `--form`) are not yet rendered.
+  The import succeeds, but the body is omitted and a `TODO` note is added to the request name.
+* *Pre- and post-request scripts* are not supported.
+  curl commands do not carry script logic, so this is not a curl-specific limitation, but worth noting for completeness.
+* *OAuth helpers* are not translated.
+  Flags such as `--oauth2-bearer` are not recognised.
+  Add the corresponding `Authorization` header manually after import.
+* *File-upload content negotiation*: the `@path` body-from-file shorthand becomes a `< ./path` directive (see xref:http-file-syntax.adoc#body-from-file[Body from file]), but the `Content-Type` header is not inferred automatically — set it explicitly with `-H 'Content-Type: application/octet-stream'` before copying.
+
+See xref:roadmap.adoc[Roadmap and limitations] for items planned in future releases.
+
+== Composing with `format` and `run-all`
+
+The `import curl` output is designed to feed directly into the rest of the `zed-http` toolchain.
+The intended CI shape is one paste from devtools, one command to add assertions, and one command to verify:
+
+[source,bash]
+----
+# 1. Import a request captured from the browser
+pbpaste | zed-http import curl --stdin --out smoke.http --name "Create order"
+
+# 2. Open smoke.http and add assertions, for example:
+#    # @expect-status 201
+#    # @expect-header content-type application/json
+
+# 3. Run every request in the file and get a pass/fail summary
+zed-http run-all --file smoke.http --env staging
+----
+
+See xref:assertions.adoc[Response assertions] for the full list of `# @expect-*` directives, and xref:cli-reference.adoc#run-all[zed-http run-all] for the complete flag reference.

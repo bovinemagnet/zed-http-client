@@ -1,6 +1,6 @@
 [package]
 name = "zed-http-core"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 
 [dependencies]
@@ -14,3 +14,4 @@ indexmap = { version = "2", features = ["serde"] }
 url = "2"
 uuid = { version = "1", features = ["v7"] }
 rand = "0.8"
+base64 = "0.22"

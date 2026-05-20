@@ -23,8 +23,8 @@
 //! - `introspect` — send the standard GraphQL introspection query against
 //!   a selected GRAPHQL request and cache the schema.
 //! - `schema`     — inspect / list cached schemas.
-//! - `import`     — translate a Postman v2.1 collection into a `.http`
-//!   file.
+//! - `import`     — translate a Postman v2.1 collection (`import postman`)
+//!   or a `curl` command (`import curl`) into a canonical `.http` block.
 
 use std::{
     fs,
@@ -41,9 +41,9 @@ use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
     build_preview, cookie_jar_path, evaluate_assertions, format_pretty_response,
-    format_request_file, import_postman_collection, introspection_payload, list_environments,
-    load_cached_schema, mask_variables, parse_request_file, prepare_request, response_root,
-    save_response, schema_root, schema_slug, validate_request_file_with_schemas,
+    format_request_file, import_curl, import_postman_collection, introspection_payload,
+    list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
+    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
     validate_request_with_schema, AssertionResponse, RequestMethod, RequestSelector,
     ResolvedRequest, ResponseSummary, ValidationIssue,
 };
@@ -160,6 +160,23 @@ enum ImportCommand {
         file: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    Curl {
+        /// Inline curl command, e.g. `'curl https://example.com'`.
+        #[arg(value_name = "CURL_COMMAND")]
+        command: Option<String>,
+        /// Read the curl command from a file.
+        #[arg(long, conflicts_with_all = ["command", "stdin"])]
+        file: Option<PathBuf>,
+        /// Read the curl command from stdin.
+        #[arg(long, conflicts_with_all = ["command", "file"])]
+        stdin: bool,
+        /// Write the resulting .http content here. Defaults to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Override the imported request's name.
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -398,29 +415,81 @@ fn import_command(command: ImportCommand) -> Result<()> {
             let request_file = import_postman_collection(&raw)
                 .with_context(|| format!("failed to import {}", file.display()))?;
             let rendered = format_request_file(&request_file);
-            match out {
-                Some(path) => {
-                    if let Some(parent) = path.parent() {
-                        if !parent.as_os_str().is_empty() {
-                            fs::create_dir_all(parent).with_context(|| {
-                                format!("failed to create output directory {}", parent.display())
-                            })?;
-                        }
-                    }
-                    fs::write(&path, &rendered)
-                        .with_context(|| format!("failed to write {}", path.display()))?;
-                    eprintln!(
-                        "Imported {} request(s) from {} → {}",
-                        request_file.requests.len(),
-                        file.display(),
-                        path.display()
+            emit_import_output(
+                out.as_deref(),
+                &rendered,
+                request_file.requests.len(),
+                &file.display().to_string(),
+            )
+        }
+        ImportCommand::Curl {
+            command,
+            file,
+            stdin,
+            out,
+            name,
+        } => {
+            let (raw, source_label) = match (command, file, stdin) {
+                (Some(cmd), None, false) => (cmd, "<inline>".to_string()),
+                (None, Some(path), false) => {
+                    let text = fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    (text, path.display().to_string())
+                }
+                (None, None, true) => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .context("failed to read curl command from stdin")?;
+                    (buf, "<stdin>".to_string())
+                }
+                (None, None, false) => {
+                    anyhow::bail!(
+                        "provide a curl command as a positional argument, \
+                         --file <path>, or --stdin"
                     );
                 }
-                None => print!("{rendered}"),
-            }
-            Ok(())
+                _ => unreachable!("clap conflicts_with rules out the rest"),
+            };
+            let request_file = import_curl(&raw, name.as_deref())
+                .with_context(|| format!("failed to import curl command from {source_label}"))?;
+            let rendered = format_request_file(&request_file);
+            emit_import_output(
+                out.as_deref(),
+                &rendered,
+                request_file.requests.len(),
+                &source_label,
+            )
         }
     }
+}
+
+fn emit_import_output(
+    out: Option<&Path>,
+    rendered: &str,
+    request_count: usize,
+    source_label: &str,
+) -> Result<()> {
+    match out {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create output directory {}", parent.display())
+                    })?;
+                }
+            }
+            fs::write(path, rendered)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            eprintln!(
+                "Imported {request_count} request(s) from {source_label} → {}",
+                path.display()
+            );
+        }
+        None => print!("{rendered}"),
+    }
+    Ok(())
 }
 
 fn schema_dir(worktree: Option<&Path>) -> PathBuf {
