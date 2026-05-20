@@ -11,6 +11,9 @@
 //! - `run`        — execute a single request, with optional pre-flight
 //!   validation and per-request `# @timeout` / `# @no-redirect` /
 //!   `# @fragments` / `# @expect-*` directives honoured.
+//! - `run-all`    — execute every request in a file in order, with a
+//!   per-request status line and a pass/fail summary. Shares one cookie
+//!   jar across iterations so login → action flows work in CI.
 //! - `check`      — validate every request in a file without sending.
 //! - `list`       — enumerate requests with line numbers (drives Zed's
 //!   "select a request" pickers).
@@ -89,6 +92,24 @@ enum Commands {
         env: Option<String>,
         #[arg(long)]
         worktree: Option<PathBuf>,
+    },
+    RunAll {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        env: Option<String>,
+        #[arg(long)]
+        worktree: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long)]
+        bail: bool,
+        #[arg(long)]
+        no_validate: bool,
+        #[arg(long)]
+        no_cookies: bool,
+        #[arg(long)]
+        cookie_jar: Option<PathBuf>,
     },
     List {
         #[arg(long)]
@@ -199,6 +220,28 @@ async fn main() -> Result<()> {
             env,
             worktree,
         } => check_command(&file, env.as_deref(), worktree.as_deref()),
+        Commands::RunAll {
+            file,
+            env,
+            worktree,
+            output,
+            bail,
+            no_validate,
+            no_cookies,
+            cookie_jar,
+        } => {
+            run_all_command(RunAllOptions {
+                file: &file,
+                env: env.as_deref(),
+                worktree: worktree.as_deref(),
+                output_mode: output,
+                bail,
+                no_validate,
+                no_cookies,
+                cookie_jar: cookie_jar.as_deref(),
+            })
+            .await
+        }
         Commands::Schema { command } => schema_command(command),
         Commands::Import { command } => import_command(command),
         Commands::List { file } => list_command(&file),
@@ -664,22 +707,366 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         println!();
     }
 
-    let cookie_jar_target = if no_cookies {
-        None
-    } else {
-        Some(
-            cookie_jar
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| cookie_jar_path(file, worktree)),
-        )
-    };
+    let cookie_jar_target = resolve_cookie_jar_target(file, worktree, cookie_jar, no_cookies);
     let cookie_store = cookie_jar_target.as_ref().map(|path| load_cookie_jar(path));
 
     let client = build_client(&resolved, cookie_store.clone())?;
+    let outcome = execute_resolved_request(&client, file, worktree, &resolved).await?;
+
+    match output_mode {
+        OutputMode::Pretty => {
+            let summary = ResponseSummary {
+                status: outcome.status_line.clone(),
+                duration_ms: outcome.duration_ms,
+                content_type: outcome.content_type.clone(),
+                saved_path: outcome.saved_path.clone(),
+                preview: outcome.body_preview.clone(),
+            };
+            print!("{}", format_pretty_response(&resolved, &summary));
+            if let Some(path) = &outcome.redirect_path {
+                println!("Response redirect:\n{}", path.display());
+            }
+            if !outcome.assertion_failures.is_empty() {
+                eprintln!("\nAssertion failures:");
+                for failure in &outcome.assertion_failures {
+                    eprintln!("  {}:{}: {}", file.display(), failure.line, failure.message);
+                }
+            }
+        }
+        OutputMode::Raw => print!("{}", outcome.body_text),
+        OutputMode::Json => {
+            let body_value = serde_json::from_str::<serde_json::Value>(&outcome.body_text)
+                .unwrap_or_else(|_| json!(outcome.body_text));
+            let payload = json!({
+                "request": {
+                    "name": resolved.name,
+                    "method": resolved.method.as_str(),
+                    "url": resolved.url,
+                    "line": resolved.range_start_line,
+                },
+                "response": {
+                    "status": outcome.status_line,
+                    "duration_ms": outcome.duration_ms,
+                    "content_type": outcome.content_type,
+                    "saved_path": outcome.saved_path,
+                    "redirect_path": outcome.redirect_path,
+                    "body": body_value,
+                    "assertion_failures": outcome.assertion_failures
+                        .iter()
+                        .map(|f| json!({ "line": f.line, "message": f.message }))
+                        .collect::<Vec<_>>(),
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+    }
+
+    if let (Some(path), Some(store)) = (cookie_jar_target.as_ref(), cookie_store.as_ref()) {
+        save_cookie_jar(path, store)
+            .with_context(|| format!("failed to persist cookie jar to {}", path.display()))?;
+    }
+
+    if !outcome.assertion_failures.is_empty() {
+        anyhow::bail!(
+            "{} response assertion(s) failed",
+            outcome.assertion_failures.len()
+        );
+    }
+
+    Ok(())
+}
+
+struct RequestOutcome {
+    status_code: u16,
+    status_line: String,
+    duration_ms: u128,
+    content_type: Option<String>,
+    saved_path: PathBuf,
+    redirect_path: Option<PathBuf>,
+    body_text: String,
+    body_preview: String,
+    assertion_failures: Vec<zed_http_core::AssertionFailure>,
+}
+
+struct RunAllOptions<'a> {
+    file: &'a Path,
+    env: Option<&'a str>,
+    worktree: Option<&'a Path>,
+    output_mode: OutputMode,
+    bail: bool,
+    no_validate: bool,
+    no_cookies: bool,
+    cookie_jar: Option<&'a Path>,
+}
+
+async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
+    let RunAllOptions {
+        file,
+        env,
+        worktree,
+        output_mode,
+        bail,
+        no_validate,
+        no_cookies,
+        cookie_jar,
+    } = opts;
+
+    let contents =
+        fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
+    let parsed = parse_request_file(&contents)
+        .with_context(|| format!("failed to parse {}", file.display()))?;
+
+    if parsed.requests.is_empty() {
+        anyhow::bail!("{} contains no requests", file.display());
+    }
+
+    if !no_validate {
+        // Whole-file validation up front. Schema-aware checks need a
+        // resolvable URL, so they degrade silently when env interpolation
+        // can't produce one (same rules as `check`).
+        let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
+        for request in &parsed.requests {
+            let resolved_url = prepare_request(
+                file,
+                &contents,
+                RequestSelector::Line(request.range.start_line),
+                env,
+                worktree,
+            )
+            .ok()
+            .map(|r| r.url)
+            .or_else(|| {
+                if !request.url.contains("{{") {
+                    Some(request.url.clone())
+                } else {
+                    None
+                }
+            });
+            schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
+        }
+        let issues = validate_request_file_with_schemas(&parsed, |idx, _| {
+            schemas.get(idx).and_then(|slot| slot.clone())
+        });
+        if !issues.is_empty() {
+            print_issues(file, &issues);
+            anyhow::bail!("validation failed; re-run with --no-validate to skip these checks");
+        }
+    }
+
+    let cookie_jar_target = resolve_cookie_jar_target(file, worktree, cookie_jar, no_cookies);
+    let cookie_store = cookie_jar_target.as_ref().map(|path| load_cookie_jar(path));
+
+    let total = parsed.requests.len();
+    let mut results: Vec<RunAllEntry> = Vec::with_capacity(total);
+    let mut bailed_at: Option<usize> = None;
+
+    let pretty = matches!(output_mode, OutputMode::Pretty);
+    if pretty {
+        println!("{}", file.display());
+    }
+
+    for (idx, request) in parsed.requests.iter().enumerate() {
+        let name = request
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Unnamed request at line {}", request.range.start_line));
+
+        let resolved = match prepare_request(
+            file,
+            &contents,
+            RequestSelector::Line(request.range.start_line),
+            env,
+            worktree,
+        ) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                let message = format!("failed to prepare request: {err}");
+                if pretty {
+                    println!("  ✗ {:<30} {}", name, message);
+                }
+                results.push(RunAllEntry {
+                    index: idx + 1,
+                    name,
+                    line: request.range.start_line,
+                    method: request.method.as_str().to_string(),
+                    url: request.url.clone(),
+                    ok: false,
+                    status_code: None,
+                    status_line: None,
+                    duration_ms: None,
+                    error: Some(message),
+                    assertion_failures: Vec::new(),
+                });
+                if bail {
+                    bailed_at = Some(idx + 1);
+                    break;
+                }
+                continue;
+            }
+        };
+
+        let client = build_client(&resolved, cookie_store.clone())?;
+        let outcome = match execute_resolved_request(&client, file, worktree, &resolved).await {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let message = format!("request failed: {err}");
+                if pretty {
+                    println!("  ✗ {:<30} {}", name, message);
+                }
+                results.push(RunAllEntry {
+                    index: idx + 1,
+                    name,
+                    line: request.range.start_line,
+                    method: resolved.method.as_str().to_string(),
+                    url: resolved.url.clone(),
+                    ok: false,
+                    status_code: None,
+                    status_line: None,
+                    duration_ms: None,
+                    error: Some(message),
+                    assertion_failures: Vec::new(),
+                });
+                if bail {
+                    bailed_at = Some(idx + 1);
+                    break;
+                }
+                continue;
+            }
+        };
+
+        let ok = outcome.status_code < 400 && outcome.assertion_failures.is_empty();
+        if pretty {
+            let marker = if ok { "✓" } else { "✗" };
+            println!(
+                "  {marker} {:<30} {:<24} {:>5}ms",
+                name, outcome.status_line, outcome.duration_ms
+            );
+            for failure in &outcome.assertion_failures {
+                println!(
+                    "      {}:{}: {}",
+                    file.display(),
+                    failure.line,
+                    failure.message
+                );
+            }
+        }
+        let entry = RunAllEntry {
+            index: idx + 1,
+            name,
+            line: request.range.start_line,
+            method: resolved.method.as_str().to_string(),
+            url: resolved.url.clone(),
+            ok,
+            status_code: Some(outcome.status_code),
+            status_line: Some(outcome.status_line.clone()),
+            duration_ms: Some(outcome.duration_ms),
+            error: None,
+            assertion_failures: outcome.assertion_failures.clone(),
+        };
+        let entry_ok = entry.ok;
+        results.push(entry);
+        if bail && !entry_ok {
+            bailed_at = Some(idx + 1);
+            break;
+        }
+    }
+
+    if let (Some(path), Some(store)) = (cookie_jar_target.as_ref(), cookie_store.as_ref()) {
+        save_cookie_jar(path, store)
+            .with_context(|| format!("failed to persist cookie jar to {}", path.display()))?;
+    }
+
+    let passed = results.iter().filter(|r| r.ok).count();
+    let failed = results.iter().filter(|r| !r.ok).count();
+    let skipped = total - results.len();
+
+    match output_mode {
+        OutputMode::Pretty => {
+            println!();
+            print!("{} requests: {} passed, {} failed", total, passed, failed);
+            if skipped > 0 {
+                print!(", {} skipped", skipped);
+            }
+            println!();
+            if let Some(at) = bailed_at {
+                println!("bailed at request #{at}");
+            }
+        }
+        OutputMode::Raw => {
+            for entry in &results {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    if entry.ok { "PASS" } else { "FAIL" },
+                    entry
+                        .status_line
+                        .clone()
+                        .unwrap_or_else(|| "error".to_string()),
+                    entry.name,
+                    entry.url
+                );
+            }
+        }
+        OutputMode::Json => {
+            let payload = json!({
+                "file": file.display().to_string(),
+                "summary": {
+                    "total": total,
+                    "passed": passed,
+                    "failed": failed,
+                    "skipped": skipped,
+                    "bailed_at": bailed_at,
+                },
+                "requests": results.iter().map(|entry| json!({
+                    "index": entry.index,
+                    "name": entry.name,
+                    "line": entry.line,
+                    "method": entry.method,
+                    "url": entry.url,
+                    "ok": entry.ok,
+                    "status_code": entry.status_code,
+                    "status": entry.status_line,
+                    "duration_ms": entry.duration_ms,
+                    "error": entry.error,
+                    "assertion_failures": entry.assertion_failures.iter()
+                        .map(|f| json!({ "line": f.line, "message": f.message }))
+                        .collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+    }
+
+    if failed > 0 || bailed_at.is_some() {
+        anyhow::bail!("{} request(s) failed", failed);
+    }
+
+    Ok(())
+}
+
+struct RunAllEntry {
+    index: usize,
+    name: String,
+    line: usize,
+    method: String,
+    url: String,
+    ok: bool,
+    status_code: Option<u16>,
+    status_line: Option<String>,
+    duration_ms: Option<u128>,
+    error: Option<String>,
+    assertion_failures: Vec<zed_http_core::AssertionFailure>,
+}
+
+async fn execute_resolved_request(
+    client: &reqwest::Client,
+    file: &Path,
+    worktree: Option<&Path>,
+    resolved: &ResolvedRequest,
+) -> Result<RequestOutcome> {
     let method = Method::from_bytes(resolved.http_method.as_bytes())?;
     let mut request = client.request(method, &resolved.url);
-    for (name, value) in &resolved.headers {
-        request = request.header(name, value);
+    for (header_name, header_value) in &resolved.headers {
+        request = request.header(header_name, header_value);
     }
     if let Some(body) = &resolved.body {
         request = request.body(body.clone());
@@ -727,72 +1114,43 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         Some(redirect) => Some(write_response_redirect(file, redirect, &body_text)?),
         None => None,
     };
-    let preview = build_preview(content_type.as_deref(), &body_text);
-    let summary = ResponseSummary {
-        status: format!(
-            "{} {}",
-            status.as_u16(),
-            status.canonical_reason().unwrap_or("")
-        )
-        .trim()
-        .to_string(),
+    let body_preview = build_preview(content_type.as_deref(), &body_text);
+    let status_line = format!(
+        "{} {}",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
+    )
+    .trim()
+    .to_string();
+
+    Ok(RequestOutcome {
+        status_code: status.as_u16(),
+        status_line,
         duration_ms: duration.as_millis(),
         content_type,
         saved_path,
-        preview,
-    };
+        redirect_path,
+        body_text,
+        body_preview,
+        assertion_failures,
+    })
+}
 
-    match output_mode {
-        OutputMode::Pretty => {
-            print!("{}", format_pretty_response(&resolved, &summary));
-            if let Some(path) = &redirect_path {
-                println!("Response redirect:\n{}", path.display());
-            }
-            if !assertion_failures.is_empty() {
-                eprintln!("\nAssertion failures:");
-                for failure in &assertion_failures {
-                    eprintln!("  {}:{}: {}", file.display(), failure.line, failure.message);
-                }
-            }
-        }
-        OutputMode::Raw => print!("{}", body_text),
-        OutputMode::Json => {
-            let body_value = serde_json::from_str::<serde_json::Value>(&body_text)
-                .unwrap_or_else(|_| json!(body_text));
-            let payload = json!({
-                "request": {
-                    "name": resolved.name,
-                    "method": resolved.method.as_str(),
-                    "url": resolved.url,
-                    "line": resolved.range_start_line,
-                },
-                "response": {
-                    "status": summary.status,
-                    "duration_ms": summary.duration_ms,
-                    "content_type": summary.content_type,
-                    "saved_path": summary.saved_path,
-                    "redirect_path": redirect_path,
-                    "body": body_value,
-                    "assertion_failures": assertion_failures
-                        .iter()
-                        .map(|f| json!({ "line": f.line, "message": f.message }))
-                        .collect::<Vec<_>>(),
-                }
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
+fn resolve_cookie_jar_target(
+    file: &Path,
+    worktree: Option<&Path>,
+    cookie_jar: Option<&Path>,
+    no_cookies: bool,
+) -> Option<PathBuf> {
+    if no_cookies {
+        None
+    } else {
+        Some(
+            cookie_jar
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| cookie_jar_path(file, worktree)),
+        )
     }
-
-    if let (Some(path), Some(store)) = (cookie_jar_target.as_ref(), cookie_store.as_ref()) {
-        save_cookie_jar(path, store)
-            .with_context(|| format!("failed to persist cookie jar to {}", path.display()))?;
-    }
-
-    if !assertion_failures.is_empty() {
-        anyhow::bail!("{} response assertion(s) failed", assertion_failures.len());
-    }
-
-    Ok(())
 }
 
 fn load_cookie_jar(path: &Path) -> Arc<CookieStoreMutex> {

@@ -40,8 +40,12 @@ fn interpolate_impl(
     values: &IndexMap<String, String>,
     fail_on_missing: bool,
 ) -> Result<String, HttpClientError> {
-    let regex =
-        Regex::new(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}").expect("valid interpolation regex");
+    // `$`-prefixed names are reserved for dynamic variables ($uuid,
+    // $timestamp, ...) and must be allowed both as the leading character
+    // and inside the name (a user could shadow `$timestamp` with
+    // `@$timestamp = 1700000000` for deterministic tests).
+    let regex = Regex::new(r"\{\{\s*([$A-Za-z_][$A-Za-z0-9_.-]*)\s*\}\}")
+        .expect("valid interpolation regex");
     let mut output = String::with_capacity(text.len());
     let mut last_end = 0usize;
 

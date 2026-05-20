@@ -16,6 +16,7 @@ zed-http <subcommand> --help
 == Subcommands
 
 * xref:#run[run] — execute a single HTTP or GraphQL request
+* xref:#run-all[run-all] — execute every request in a file with a pass/fail summary
 * xref:#check[check] — validate every request in a file without sending
 * xref:#list[list] — print a numbered request listing
 * xref:#envs[envs] — list available environment names
@@ -52,6 +53,11 @@ The request is selected by line number, by name, or — when neither is specifie
 Unless `--no-validate` is passed, the selected request is validated (including schema-aware checks for GRAPHQL requests when a cached schema is available) before the HTTP connection is opened.
 After execution the response body is saved to `<base>/.zed-http/responses/` relative to the `.http` file.
 Assertion directives (`# @expect-*`) are evaluated against the live response and cause a non-zero exit on failure.
+
+Built-in dynamic variables (`{{$uuid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`) are resolved automatically — no declaration needed.
+They are generated once per `run` invocation so all references within the same request expand to the same value.
+See xref:directives.adoc#dynamic-variables[Dynamic variables] for the full semantics.
+
 See xref:assertions.adoc[Response assertions] and xref:cookies.adoc[Persistent cookies] for related features.
 
 === Flags
@@ -145,6 +151,175 @@ Non-zero exit is produced when:
 [source,bash]
 ----
 zed-http run --file api/users.http --line 12 --env dev --output json
+----
+
+---
+
+[[run-all]]
+== zed-http run-all
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http run-all --file <path>
+                 [--env <name>]
+                 [--worktree <path>]
+                 [--output pretty|json|raw]
+                 [--bail]
+                 [--no-validate]
+                 [--no-cookies]
+                 [--cookie-jar <path>]
+----
+
+=== Description
+
+Executes every request in the given `.http` or `.rest` file in declaration order.
+This is the primary command for smoke-test suites and CI pipelines where you want to run a whole file and get a pass/fail result for each request.
+
+Unless `--no-validate` is passed, the entire file is validated (including schema-aware GRAPHQL checks) before any request is sent.
+A single cookie jar is built at the start and shared across all requests in the run, so login → action flows work without any extra setup.
+The jar is persisted once at the end of the run.
+
+Dynamic variables (`{{$uuid}}`, `{{$timestamp}}`, etc.) are resolved independently for each request, so each iteration gets a fresh set.
+See xref:directives.adoc#dynamic-variables[Dynamic variables] for details.
+
+==== Pretty output
+
+In `pretty` mode (the default), the filename is printed first, then one status line per request:
+
+----
+smoke-tests.http
+  ✓ Health check                  200 OK                   42ms
+  ✓ Create order                  201 Created             108ms
+  ✗ Verify order status           200 OK                   55ms
+      smoke-tests.http:31: expected status [404], got 200
+
+3 requests: 2 passed, 1 failed
+----
+
+Each assertion failure appears on a fresh line indented below the request that failed, in `<file>:<line>: <message>` format.
+The summary line at the end counts total, passed, failed, and (when `--bail` was triggered) skipped requests.
+
+==== JSON output
+
+In `json` mode the command emits a single JSON object:
+
+[source,json]
+----
+{
+  "file": "smoke-tests.http",
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "skipped": 0,
+    "bailed_at": null
+  },
+  "requests": [
+    {
+      "index": 1,
+      "name": "Health check",
+      "line": 4,
+      "method": "GET",
+      "url": "https://staging.example.com/health",
+      "ok": true,
+      "status_code": 200,
+      "status": "200 OK",
+      "duration_ms": 42,
+      "error": null,
+      "assertion_failures": []
+    }
+  ]
+}
+----
+
+`summary.bailed_at` is a 1-based request index when `--bail` triggered early termination, otherwise `null`.
+`requests[].assertion_failures` follows the same `{line, message}` shape as the `run` JSON envelope.
+
+==== Raw output
+
+In `raw` mode, one tab-separated row is printed per request:
+
+----
+PASS\t<status>\t<name>\t<url>
+FAIL\t<status>\t<name>\t<url>
+----
+
+Useful for post-processing with `awk`, `grep`, or a CI log parser.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file to run.
+
+|`--env <name>`
+|string, optional
+|Load the named environment from `http-client.env.json` (and `http-client.private.env.json`). Overrides any `# @env` directive in the file.
+
+|`--worktree <path>`
+|path, optional
+|Root path for environment file discovery and `.zed-http/` artifact directories.
+
+|`--output <mode>`
+|`pretty` \| `json` \| `raw`, default `pretty`
+|Output format. See above for the shape of each mode.
+
+|`--bail`
+|flag
+|Stop execution at the first failed request.
+  The remaining requests are counted as skipped and appear in the summary.
+  The exit code is still non-zero.
+
+|`--no-validate`
+|flag
+|Skip the whole-file pre-flight validation step.
+  Useful when iterating on a file that is not yet well-formed.
+
+|`--no-cookies`
+|flag
+|Disable the shared cookie jar for this run. Cookies are neither read nor written.
+
+|`--cookie-jar <path>`
+|path, optional
+|Override the cookie jar file location. Defaults to `<base>/.zed-http/cookies.json`.
+  The jar is loaded once at the start of the run, shared across all requests, and persisted once at the end.
+  This is what makes a login request at position 1 supply credentials to action requests at positions 2, 3, etc.
+|===
+
+=== Exit codes
+
+`run-all` exits non-zero when:
+
+* Pre-flight validation fails (unless `--no-validate`).
+* Any request in the file fails (HTTP error status ≥ 400, or a `# @expect-*` assertion is not satisfied).
+* `--bail` is triggered (even if only one request failed before stopping).
+
+Exit `0` only when every request passes.
+
+=== Example
+
+[source,bash]
+----
+zed-http run-all --file smoke-tests.http --env staging --bail
+----
+
+Expected pretty output when the third request fails a `# @expect-status` assertion:
+
+----
+smoke-tests.http
+  ✓ Health check                  200 OK                   38ms
+  ✓ Create order                  201 Created              92ms
+  ✗ Verify order status           200 OK                   51ms
+      smoke-tests.http:31: expected status [404], got 200
+
+3 requests: 2 passed, 1 failed
+bailed at request #3
 ----
 
 ---

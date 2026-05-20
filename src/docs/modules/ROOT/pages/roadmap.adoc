@@ -2,7 +2,7 @@
 :description: Where zed-http-client stands against the original PRD roadmap — completed tiers, deferred features, and known limitations.
 
 The project follows the roadmap laid out in the initial PRD (section 11).
-Tiers v0.1 through v0.4 are now complete.
+Tiers v0.1 through v0.4 are now complete, including the {project-version} quality-of-life additions.
 The items from those tiers that were explicitly deferred — multipart bodies, JavaScript scripting, OAuth flows, and a custom Zed output pane — remain unscheduled; they are grouped under xref:#deferred[Deferred].
 
 == Completed tiers
@@ -58,10 +58,21 @@ _Shipped in releases 0.4.0 and 0.4.1._
 * [x] `# @env <name>` file-level directive — selects the active environment without requiring `--env` on every invocation
 * [x] `zed-http check` and `zed-http format` honour `# @env`
 
+=== v0.4.x — quality of life
+
+_Shipped in releases 0.4.1 and 0.4.2._
+
+* [x] `# @env` file-level directive (0.4.1) — see above
+* [x] Module-level documentation across the workspace (0.4.1) — every Rust source file carries a doc comment summarising its purpose
+* [x] xref:directives.adoc#dynamic-variables[Dynamic variables] (0.4.2) — `$uuid` (UUID v7), `$timestamp`, `$isoTimestamp`, `$randomInt`; user variables of the same name shadow the dynamic value for deterministic testing
+* [x] xref:cli-reference.adoc#run-all[`zed-http run-all`] (0.4.2) — executes every request in declaration order with a per-request `✓`/`✗` status line, a pass/failed/skipped summary, `--bail` support, and a shared cookie jar across all iterations
+
 [[deferred]]
 == Deferred
 
-The items below were listed in the original PRD but have not yet been scheduled.
+The v0.4 PRD tier is now substantially complete.
+The items that were listed in the PRD for v0.4 but not yet implemented are: multipart request bodies, JavaScript pre-/post-request scripts, OAuth flows, and a custom Zed output pane.
+All four remain unscheduled and are described below.
 
 === Multipart / form-data request bodies
 

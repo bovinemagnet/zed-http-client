@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-05-20
+
+Two practical additions for everyday use: IntelliJ-style dynamic
+variables for unique IDs and timestamps, and a `run-all` subcommand
+that executes every request in a file with a pass/fail summary.
+
+### Added
+
+- IntelliJ-compatible dynamic variables, generated fresh per
+  `prepare_request` call but consistent within a single request so the
+  same `{{$uuid}}` can be replayed in both a header and a body:
+  - `{{$uuid}}` — UUID v7 (time-ordered, RFC 9562), lowercase, hyphenated.
+  - `{{$timestamp}}` — current Unix time in seconds.
+  - `{{$isoTimestamp}}` — current time as RFC 3339 / ISO 8601 with `Z`.
+  - `{{$randomInt}}` — uniform integer in `[0, 1000]`.
+  - User-defined variables of the same name shadow the dynamic value
+    (`@$timestamp = 1700000000` for deterministic tests).
+- `zed-http run-all` runs every request in a file in declaration order.
+  - Per-request status line with `✓` / `✗`, status text, and duration.
+  - Final summary line with passed/failed/skipped counts.
+  - `--bail` stops at the first failure (skipped count reflects what
+    didn't run).
+  - `--env <name>`, `--worktree <path>`, `--no-validate`, `--no-cookies`,
+    and `--cookie-jar <path>` flags mirror `run`.
+  - One shared cookie jar across all iterations, persisted once at the
+    end, so login → action flows survive between requests.
+  - Pretty / JSON / Raw output modes. JSON envelope includes the full
+    per-request structure with assertion failures.
+  - Exit code is non-zero if any request fails.
+- Public core API: `build_dynamic_variables` (in new `dynamic` module),
+  re-exported at the crate root.
+- Interpolation regex updated to recognise `$` in variable names so
+  `{{$uuid}}` resolves.
+
+### Changed
+
+- `RequestOutcome` extracted from the body of `run_command` into a
+  shared internal helper so `run-all` can reuse the same execute →
+  capture → assert → persist pipeline without code duplication.
+
 ## [0.4.1] - 2026-05-20
 
 Small follow-up that makes per-environment runs ergonomic to set up from

@@ -36,9 +36,10 @@ If neither file exists, the runner continues with no environment variables; only
 Variables are merged in the following order.
 Each later step overrides values from the steps before it:
 
+. *Dynamic variables* — `$uuid`, `$timestamp`, `$isoTimestamp`, and `$randomInt` are pre-seeded into the variable map as the base layer, generated fresh for each request.
 . *Public env file* — keys from `http-client.env.json` under the selected environment name.
 . *Private env file* — keys from `http-client.private.env.json` under the same environment name, overlaid on top of the public values.
-. *In-file variables* — `@name = value` declarations in the request file preamble always override both env files.
+. *In-file variables* — `@name = value` declarations in the request file preamble always override all of the above.
 . _(Reserved)_ CLI per-variable overrides are not yet exposed as a flag.
 
 This layering means you can commit placeholder values in `http-client.env.json` and provide real secrets by adding matching keys in `http-client.private.env.json`, with no changes to the request file.
@@ -117,6 +118,56 @@ GET {{host}}/actuator/health
 
 In the example above, running `zed-http run --file requests.http --line 5` loads the `dev` environment from `http-client.env.json` and `http-client.private.env.json`.
 Running `zed-http run --file requests.http --line 5 --env prod` overrides the directive and loads `prod` instead.
+
+[[variable-resolution-layers]]
+== Variable resolution layers
+
+As of {project-version}, four sources contribute variables to every request.
+Each source can override values from the one before it:
+
+[cols="1,1,4",options="header"]
+|===
+| Layer | Source | Notes
+
+| 1 (base)
+| Dynamic variables
+| `$uuid`, `$timestamp`, `$isoTimestamp`, `$randomInt` — generated once per request and held constant for the lifetime of that request.
+  See xref:directives.adoc#dynamic-variables[Dynamic variables] for semantics and the full list.
+
+| 2
+| Public env file
+| `http-client.env.json` under the selected environment name.
+
+| 3
+| Private env file
+| `http-client.private.env.json` under the same name — only overrides keys it declares.
+
+| 4 (top)
+| In-file declarations
+| `@name = value` lines in the file preamble (before the first `###`).
+|===
+
+Because user-defined values sit above the dynamic layer, you can pin any dynamic variable for deterministic tests.
+For example, to fix `$timestamp` in a request file:
+
+[source,asciidoc]
+----
+@$timestamp = 1700000000
+
+### Pinned test
+GET {{host}}/events?since={{$timestamp}}
+----
+
+The same pin can be placed in `http-client.env.json` for environment-scoped overrides:
+
+[source,json]
+----
+{
+  "test": {
+    "$timestamp": "1700000000"
+  }
+}
+----
 
 == Variable resolution
 

@@ -23,6 +23,9 @@
 //! - [`validate`] — pre-flight checks before a request fires (variable
 //!   completeness, schema-aware field validation when a cache exists).
 //! - [`assertion`] — `# @expect-*` directives evaluated against a response.
+//! - [`dynamic`] — IntelliJ-compatible `$`-prefixed variables (`$uuid`,
+//!   `$timestamp`, `$isoTimestamp`, `$randomInt`) generated fresh per
+//!   request and overridable by user-defined variables of the same name.
 //! - [`format`] — re-emits a parsed file in canonical layout, used by
 //!   `zed-http format`.
 //! - [`output`] — pretty-printers, response persistence under `.zed-http/`,
@@ -33,6 +36,7 @@
 //! - [`error`] — single [`error::HttpClientError`] type returned everywhere.
 
 pub mod assertion;
+pub mod dynamic;
 pub mod env;
 pub mod error;
 pub mod executor;
@@ -47,6 +51,7 @@ pub mod schema;
 pub mod validate;
 
 pub use assertion::{evaluate_assertions, AssertionFailure, AssertionResponse};
+pub use dynamic::build_dynamic_variables;
 pub use env::{list_environments, load_environment, mask_variables, VariableMap};
 pub use error::HttpClientError;
 pub use executor::{parse_and_select_request, prepare_request, RequestSelector, ResolvedRequest};

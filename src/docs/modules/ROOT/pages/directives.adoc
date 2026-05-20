@@ -9,6 +9,9 @@ The parser recognises two scopes: *file-preamble directives* appear before the f
 Unknown directive names are silently ignored, matching IntelliJ's forward-compatibility behaviour.
 A future version of the extension may introduce new directives that older versions of `zed-http` will simply skip.
 
+NOTE: If you have seen `{{$uuid}}` or `{{$timestamp}}` in a request file and are looking for where those are documented, see <<dynamic-variables>> below.
+They are built-in generated values, not directives.
+
 For the environment file model that `# @env` interacts with see xref:environments.adoc[].
 For `# @expect-*` assertion semantics see xref:assertions.adoc[].
 For the request file format that these directives live inside see xref:http-file-syntax.adoc[].
@@ -51,6 +54,73 @@ For the request file format that these directives live inside see xref:http-file
 | Section preamble
 | Asserts a JSON value at a JSON Pointer path.
 |===
+
+[[dynamic-variables]]
+== Dynamic variables (`{{$uuid}}`, `{{$timestamp}}`, ...)
+
+Dynamic variables are built-in placeholder names that begin with `$`.
+They are not directives — they require no `# @` declaration — but users looking at a `.http` file with `{{$uuid}}` in a header will often search here first.
+
+The four supported names are:
+
+[cols="1,3",options="header"]
+|===
+| Name | Value generated per request
+
+| `{{$uuid}}`
+| UUID v7 (time-ordered, RFC 9562), lowercase, hyphenated.
+  Consecutive values from the same machine sort lexicographically in generation order, making `$uuid` a useful correlation ID or test-fixture primary key.
+
+| `{{$timestamp}}`
+| Current Unix time in seconds (integer, UTC).
+
+| `{{$isoTimestamp}}`
+| Current time as RFC 3339 / ISO 8601 with a `Z` suffix, for example `2026-05-20T10:30:00Z`.
+
+| `{{$randomInt}}`
+| A uniformly distributed integer in the range `[0, 1000]` inclusive.
+|===
+
+=== Fresh per request, consistent within a request
+
+All four values are computed once when a request is prepared, then held constant for the lifetime of that request.
+This means every `{{$uuid}}` reference inside the *same* request block — whether in a header, the URL, or the body — expands to the *same* UUID.
+The next request in the file gets a fresh set of values.
+
+The practical benefit is correlation IDs: the same UUID can appear in both an `X-Request-Id` header and a `correlation_id` body field without having to declare an intermediate variable.
+
+[source,asciidoc]
+----
+### Create order
+POST {{host}}/api/orders
+Content-Type: application/json
+X-Request-Id: {{$uuid}} <1>
+
+{
+  "correlation_id": "{{$uuid}}", <2>
+  "item": "widget"
+}
+----
+<1> The header UUID.
+<2> Expands to the *same* UUID as the header above — both references are resolved from the same snapshot for this request.
+
+=== Shadowing dynamic variables
+
+If a user-defined variable shares the same name as a dynamic variable, the user-defined value wins.
+This makes it straightforward to pin values for deterministic tests.
+
+[source,asciidoc]
+----
+@$timestamp = 1700000000 <1>
+
+### Pinned request
+GET {{host}}/events?since={{$timestamp}}
+----
+<1> Declares `$timestamp` as an in-file variable.
+  Every `{{$timestamp}}` in this file resolves to `1700000000` instead of the live clock value.
+
+The same override works via an entry in `http-client.env.json` or `http-client.private.env.json`.
+See xref:environments.adoc#variable-resolution-layers[Variable resolution layers] for the full precedence order.
 
 == File-preamble directives
 

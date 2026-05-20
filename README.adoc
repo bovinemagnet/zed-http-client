@@ -2,7 +2,7 @@
 :toc: macro
 :toclevels: 2
 :source-highlighter: highlight.js
-:project-version: 0.4.1
+:project-version: 0.4.2
 
 A Zed editor extension and companion Rust CLI for running IntelliJ-style HTTP and GraphQL request files inside Zed or from the terminal.
 
@@ -105,6 +105,7 @@ cargo run -p zed-http-cli -- check --file examples/requests.http --env dev
 [source,bash]
 ----
 zed-http run --file requests.http [--line N | --name "Title"] [--env <name>]
+zed-http run-all --file requests.http [--env <name>] [--bail] [--output json]
 zed-http check --file requests.http [--env <name>]
 zed-http list --file requests.http
 zed-http envs --file requests.http
@@ -126,6 +127,8 @@ See the link:src/docs/modules/ROOT/pages/cli-reference.adoc[CLI reference] for t
 * Response assertions: `# @expect-status`, `# @expect-header`, `# @expect-json` directives evaluated after the response with `<file>:<line>: <message>` diagnostics and non-zero exit on failure.
 * Persistent cookie jar at `<base>/.zed-http/cookies.json`, including session cookies so multi-step login → action flows survive across invocations.
 * Per-request options: `# @timeout`, `# @connection-timeout`, `# @no-redirect`, `# @fragments`.
+* Dynamic variables: `{{$uuid}}` (v7), `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}` — generated per request, consistent within a request, shadowable by user vars.
+* `zed-http run-all` executes every request in a file with a pass/fail summary, shared cookie jar, and `--bail` / `--output json` modes for CI.
 * Canonical `zed-http format` round-trip, plus a `--check` mode for CI.
 * Postman v2.1 collection import via `zed-http import postman`.
 * Zed integration: Tree-sitter syntax highlighting, runnable detection, snippets, and a pre-wired `.zed/tasks.json` covering per-environment runners.

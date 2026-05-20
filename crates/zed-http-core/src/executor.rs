@@ -23,6 +23,7 @@ use std::{fs, path::Path};
 use indexmap::IndexMap;
 
 use crate::{
+    dynamic::build_dynamic_variables,
     env::{load_environment, VariableMap},
     error::HttpClientError,
     graphql::render_graphql_json_with_extras,
@@ -88,7 +89,13 @@ pub fn prepare_request(
 ) -> Result<ResolvedRequest, HttpClientError> {
     let (request_file, request) = parse_and_select_request(contents, selector)?;
     let resolved_env = env_name.or(request_file.default_env.as_deref());
-    let mut variables = load_environment(http_file, worktree_root, resolved_env)?;
+    // Dynamic ($uuid, $timestamp, ...) is the base layer so users can
+    // shadow it with explicit env-file or in-file declarations when they
+    // want deterministic values for tests.
+    let mut variables = build_dynamic_variables();
+    for (key, value) in load_environment(http_file, worktree_root, resolved_env)? {
+        variables.insert(key, value);
+    }
     for variable in request_file.variables {
         variables.insert(variable.name, variable.value);
     }
@@ -251,6 +258,59 @@ mod tests {
         let redirect = resolved.response_redirect.unwrap();
         assert_eq!(redirect.path, "./out/last.json");
         assert!(redirect.force_overwrite);
+    }
+
+    #[test]
+    fn interpolates_dynamic_variables_into_url_and_headers() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(
+            &request_file,
+            "### Ping\nGET https://example.com/ping?token={{$uuid}}&ts={{$timestamp}}\nX-Request-Id: {{$uuid}}\n",
+        )
+        .unwrap();
+
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+
+        // Same `$uuid` reference twice in the same request must expand to the
+        // same value — that's the guarantee that makes it useful as a
+        // correlation ID.
+        let header_uuid = resolved.headers.get("X-Request-Id").unwrap().as_str();
+        assert!(
+            resolved.url.contains(&format!("token={header_uuid}")),
+            "URL '{}' did not echo the header's correlation id",
+            resolved.url
+        );
+        assert!(resolved.url.contains("&ts="));
+    }
+
+    #[test]
+    fn user_variable_shadows_dynamic_variable() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(
+            &request_file,
+            "@$timestamp = 1700000000\n\n### Pinned\nGET https://example.com/at/{{$timestamp}}\n",
+        )
+        .unwrap();
+
+        let resolved = prepare_request(
+            &request_file,
+            &fs::read_to_string(&request_file).unwrap(),
+            RequestSelector::First,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.url, "https://example.com/at/1700000000");
     }
 
     #[test]
