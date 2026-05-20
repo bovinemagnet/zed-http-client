@@ -1,6 +1,6 @@
 [
   {
-    "label": "HTTP Client: run request under cursor",
+    "label": "HTTP Client: run request (no env)",
     "command": "cargo",
     "args": [
       "run",
@@ -23,5 +23,144 @@
     "allow_concurrent_runs": true,
     "save": "current",
     "tags": ["http-client-request"]
+  },
+  {
+    "label": "HTTP Client: run request (env: dev)",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "run",
+      "--file",
+      "$ZED_FILE",
+      "--line",
+      "$ZED_ROW",
+      "--column",
+      "$ZED_COLUMN",
+      "--worktree",
+      "$ZED_WORKTREE_ROOT",
+      "--env",
+      "dev"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current",
+    "tags": ["http-client-request"]
+  },
+  {
+    "label": "HTTP Client: run request (env: test)",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "run",
+      "--file",
+      "$ZED_FILE",
+      "--line",
+      "$ZED_ROW",
+      "--column",
+      "$ZED_COLUMN",
+      "--worktree",
+      "$ZED_WORKTREE_ROOT",
+      "--env",
+      "test"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current",
+    "tags": ["http-client-request"]
+  },
+  {
+    "label": "HTTP Client: run request (env: prod)",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "run",
+      "--file",
+      "$ZED_FILE",
+      "--line",
+      "$ZED_ROW",
+      "--column",
+      "$ZED_COLUMN",
+      "--worktree",
+      "$ZED_WORKTREE_ROOT",
+      "--env",
+      "prod"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current",
+    "tags": ["http-client-request"]
+  },
+  {
+    "label": "HTTP Client: list requests in file",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "list",
+      "--file",
+      "$ZED_FILE"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current"
+  },
+  {
+    "label": "HTTP Client: list available environments",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "envs",
+      "--file",
+      "$ZED_FILE",
+      "--worktree",
+      "$ZED_WORKTREE_ROOT"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current"
+  },
+  {
+    "label": "HTTP Client: validate file",
+    "command": "cargo",
+    "args": [
+      "run",
+      "-p",
+      "zed-http-cli",
+      "--",
+      "check",
+      "--file",
+      "$ZED_FILE",
+      "--worktree",
+      "$ZED_WORKTREE_ROOT"
+    ],
+    "reveal": "always",
+    "hide": "never",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "save": "current"
   }
 ]
