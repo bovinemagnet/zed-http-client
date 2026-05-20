@@ -7,6 +7,6 @@ description = "Run IntelliJ-compatible HTTP and GraphQL request files from Zed"
 repository = "https://github.com/bovinemagnet/zed-http-client"
 languages = ["languages/http-request"]
 
-[grammars.http-request]
+[grammars.http_request]
 repository = "https://github.com/bovinemagnet/tree-sitter-http-request"
 rev = "d58c11feca5635f1f556d8771be70a2dc5d76430"

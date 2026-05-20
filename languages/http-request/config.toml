@@ -1,5 +1,5 @@
 name = "HTTP Request"
-grammar = "http-request"
+grammar = "http_request"
 path_suffixes = ["http", "rest"]
 line_comments = ["#", "//"]
 
