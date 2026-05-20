@@ -41,7 +41,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-When iterating on the Zed-side experience, the CLI is what Zed invokes via a task — see `tasks.json.example` and the `$ZED_FILE` / `$ZED_ROW` / `$ZED_WORKTREE_ROOT` plumbing in `README.md`.
+When iterating on the Zed-side experience, the CLI is what Zed invokes via a task — see `tasks.json.example`, the project-local `.zed/tasks.json`, and the `$ZED_FILE` / `$ZED_ROW` / `$ZED_WORKTREE_ROOT` plumbing documented in `README.adoc` and `src/docs/modules/ROOT/pages/zed-integration.adoc`.
 
 ## Architecture
 

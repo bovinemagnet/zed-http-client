@@ -1,0 +1,177 @@
+= zed-http-client
+:toc: macro
+:toclevels: 2
+:source-highlighter: highlight.js
+:project-version: 0.4.1
+
+A Zed editor extension and companion Rust CLI for running IntelliJ-style HTTP and GraphQL request files inside Zed or from the terminal.
+
+WARNING: This project aims for practical compatibility with the JetBrains HTTP Client file format but is not affiliated with JetBrains.
+
+== Documentation
+
+The full reference lives in the Antora documentation under `src/docs/`. Build it locally with:
+
+[source,bash]
+----
+npx antora antora-playbook.yml
+----
+
+Output lands in `build/site/zed-http-client/`. Open `index.html` to browse.
+
+When a public site is published it will live at https://bovinemagnet.github.io/zed-http-client[bovinemagnet.github.io/zed-http-client].
+
+Topic-by-topic entry points (`src/docs/modules/ROOT/pages/`):
+
+[cols="1,3a"]
+|===
+|Page |What it covers
+
+|link:src/docs/modules/ROOT/pages/index.adoc[index]
+|Project overview and feature highlights.
+
+|link:src/docs/modules/ROOT/pages/installation.adoc[installation]
+|Installing as a Zed dev extension and as a standalone CLI.
+
+|link:src/docs/modules/ROOT/pages/getting-started.adoc[getting-started]
+|Linear walkthrough from a fresh install to running a request from Zed.
+
+|link:src/docs/modules/ROOT/pages/http-file-syntax.adoc[http-file-syntax]
+|The `.http` / `.rest` file format reference.
+
+|link:src/docs/modules/ROOT/pages/directives.adoc[directives]
+|Every `# @` directive: `# @env`, `# @timeout`, `# @no-redirect`, `# @fragments`, `# @expect-*`, etc.
+
+|link:src/docs/modules/ROOT/pages/environments.adoc[environments]
+|`http-client.env.json` discovery, layering, and the `# @env` file-level default.
+
+|link:src/docs/modules/ROOT/pages/graphql.adoc[graphql]
+|GRAPHQL pseudo-method, schema introspection, fragment includes, variable + schema validation.
+
+|link:src/docs/modules/ROOT/pages/assertions.adoc[assertions]
+|`# @expect-status`, `# @expect-header`, `# @expect-json` response assertions.
+
+|link:src/docs/modules/ROOT/pages/cookies.adoc[cookies]
+|The persistent cookie jar at `<base>/.zed-http/cookies.json`.
+
+|link:src/docs/modules/ROOT/pages/postman-import.adoc[postman-import]
+|Translating Postman v2.1 collections into `.http` files.
+
+|link:src/docs/modules/ROOT/pages/zed-integration.adoc[zed-integration]
+|Running requests from inside Zed via tasks and runnables.
+
+|link:src/docs/modules/ROOT/pages/cli-reference.adoc[cli-reference]
+|Full `zed-http` subcommand and flag reference.
+
+|link:src/docs/modules/ROOT/pages/roadmap.adoc[roadmap]
+|Current state versus the original PRD; what is deferred.
+|===
+
+toc::[]
+
+== Quick start
+
+Build the CLI:
+
+[source,bash]
+----
+cargo build -p zed-http-cli
+----
+
+Run the bundled example against the included envs:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- run --file examples/requests.http --name "Health check" --env dev
+----
+
+List requests and available environments:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- list --file examples/requests.http
+cargo run -p zed-http-cli -- envs --file examples/requests.http
+----
+
+Validate without sending:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- check --file examples/requests.http --env dev
+----
+
+== Commands at a glance
+
+[source,bash]
+----
+zed-http run --file requests.http [--line N | --name "Title"] [--env <name>]
+zed-http check --file requests.http [--env <name>]
+zed-http list --file requests.http
+zed-http envs --file requests.http
+zed-http format --file requests.http [--in-place | --check]
+zed-http introspect --file requests.http --name "<GRAPHQL request>" [--env <name>]
+zed-http schema list
+zed-http schema show --host <host>
+zed-http import postman --file collection.json [--out requests.http]
+----
+
+See the link:src/docs/modules/ROOT/pages/cli-reference.adoc[CLI reference] for the full flag list, including `--no-validate`, `--no-cookies`, `--cookie-jar`, and `--worktree`.
+
+== Feature highlights
+
+* IntelliJ HTTP Client format: `.http` and `.rest` files with `###`-separated request blocks, headers, JSON bodies, body-from-file (`< ./payload.json`), and response redirects (`>>` / `>>!`).
+* `http-client.env.json` and `http-client.private.env.json` discovery with public-then-private layering plus in-file `@var = value` overlays. File-level `# @env <name>` directive selects a default when `--env` is not passed.
+* GraphQL: `GRAPHQL` pseudo-method with operation, variables, and operation-name detection. Schema introspection (`zed-http introspect`) caches schemas at `<base>/.zed-http/schema/<host>.json` for schema-aware field validation. `# @fragments ./path.graphql` includes fragments from sibling files.
+* Validation: `zed-http check` and pre-flight validation in `zed-http run` flag missing or extra GraphQL variables, and unknown top-level fields when a schema is cached.
+* Response assertions: `# @expect-status`, `# @expect-header`, `# @expect-json` directives evaluated after the response with `<file>:<line>: <message>` diagnostics and non-zero exit on failure.
+* Persistent cookie jar at `<base>/.zed-http/cookies.json`, including session cookies so multi-step login → action flows survive across invocations.
+* Per-request options: `# @timeout`, `# @connection-timeout`, `# @no-redirect`, `# @fragments`.
+* Canonical `zed-http format` round-trip, plus a `--check` mode for CI.
+* Postman v2.1 collection import via `zed-http import postman`.
+* Zed integration: Tree-sitter syntax highlighting, runnable detection, snippets, and a pre-wired `.zed/tasks.json` covering per-environment runners.
+
+== Repository layout
+
+[source,text]
+----
+zed-http-client/
+  README.adoc                this file
+  CHANGELOG.md
+  LICENSE
+  antora-playbook.yml         Antora build entry point
+  extension.toml              Zed extension manifest
+  tasks.json.example          Zed task wiring (legacy single-task example)
+  .zed/tasks.json             Project-local Zed tasks (per-env runnables)
+  Cargo.toml                  workspace root
+  crates/
+    zed-http-cli/             the `zed-http` binary
+    zed-http-core/            parser, env, executor, validators, formatter
+  languages/
+    http-request/             Zed language config + queries
+  grammars/
+    tree-sitter-http-request/ in-tree mirror of the published grammar
+  snippets/
+    http-request.json         Zed snippets
+  examples/                   sample request and env files
+  src/docs/                   Antora documentation source
+----
+
+The Tree-sitter grammar is mirrored from https://github.com/bovinemagnet/tree-sitter-http-request[bovinemagnet/tree-sitter-http-request]; the SHA in `extension.toml` pins exactly what Zed clones at install time.
+
+== Zed integration in one paragraph
+
+Open the project in Zed, run `zed: install dev extension` from the command palette and point it at this repo. The bundled `.zed/tasks.json` wires four per-environment runnables against the `http-client-request` tag on every request line, plus three ancillary tasks (`list requests`, `list available environments`, `validate file`). With your cursor on a request, run `task: spawn` → pick the environment → output appears in Zed's terminal, with the response body also saved under `examples/.zed-http/responses/` for later inspection. The link:src/docs/modules/ROOT/pages/zed-integration.adoc[Zed integration page] covers the suffix-conflict caveats and how to add a new environment to the task list.
+
+== Status and deferred work
+
+Version {project-version}. PRD-aligned roadmap tiers v0.1 through v0.4 (first slice) are complete. See link:CHANGELOG.md[CHANGELOG.md] for the per-release notes and link:src/docs/modules/ROOT/pages/roadmap.adoc[roadmap] for what is still deferred. The headline gaps:
+
+* Multipart / form-data request bodies.
+* JS pre-request scripts and response handlers (would need an embedded JS runtime).
+* OAuth flows and client certificate config.
+* A custom Zed output panel — the task terminal is the practical surface today.
+* Inline-fragment GraphQL validation (current validator skips fragments since type-condition resolution is not yet implemented).
+
+== Licence
+
+Apache-2.0. See link:LICENSE[LICENSE].
