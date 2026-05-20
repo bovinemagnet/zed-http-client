@@ -15,6 +15,7 @@
 
 .Validation and runtime
 * xref:assertions.adoc[Response assertions]
+* xref:captures.adoc[Response captures]
 * xref:cookies.adoc[Persistent cookies]
 
 .Migration

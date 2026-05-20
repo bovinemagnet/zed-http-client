@@ -53,6 +53,10 @@ For the request file format that these directives live inside see xref:http-file
 | `# @expect-json <pointer> <expected>`
 | Section preamble
 | Asserts a JSON value at a JSON Pointer path.
+
+| `# @capture <variable> <source>`
+| Section preamble
+| Captures a value from the response into a variable for later requests. See xref:captures.adoc[].
 |===
 
 [[dynamic-variables]]
@@ -390,6 +394,48 @@ The location is specified using https://www.rfc-editor.org/rfc/rfc6901[JSON Poin
 * `@expect-json requires '<pointer> <expected>'` — the directive has fewer than two whitespace-separated tokens.
 
 Failure output format: `<file>:<line>: JSON pointer '<pointer>' value '<actual>' != '<expected>'`.
+
+[#capture]
+=== `# @capture`
+
+Lifts a value out of the response and stores it as a named variable that later requests in the same `zed-http run-all` invocation can reference as `{{name}}`.
+
+[source,asciidoc]
+----
+# @capture token json:/access_token
+# @capture requestId header:X-Request-Id
+# @capture code status
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @capture <variable> <source>`
+
+| Source forms
+| `json:<pointer>` — JSON Pointer into the response body +
+  `header:<name>` — case-insensitive header value +
+  `status` — three-digit status code as a string
+
+| Repeatable
+| Yes — each directive captures a separate variable
+
+| Evaluated
+| After the response body is read, regardless of assertion outcome
+|===
+
+*Parse-time errors:*
+
+* `@capture variable name was empty` — no variable name was provided before the source.
+* `@capture source must be one of json:<pointer>, header:<name>, status (got '<spec>')` — the source token did not match any recognised form.
+
+Both errors are line-numbered and cause `zed-http` to exit before the request is sent.
+
+Unresolvable captures at *runtime* (header absent, pointer did not resolve, body was not JSON) produce warnings but do not fail the run — see xref:captures.adoc#warnings[Warnings, not errors].
+
+For the full reference — stringification rules, the secret-masking heuristic, JSON output shape, and the interaction with `--var` — see xref:captures.adoc[Response captures].
 
 == Stacking directives — worked example
 

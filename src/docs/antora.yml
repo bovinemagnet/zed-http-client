@@ -5,7 +5,7 @@ nav:
   - modules/ROOT/nav.adoc
 asciidoc:
   attributes:
-    project-version: '0.4.3'
+    project-version: '0.4.4'
     project-repo: 'https://github.com/bovinemagnet/zed-http-client'
     grammar-repo: 'https://github.com/bovinemagnet/tree-sitter-http-request'
     source-highlighter: highlight.js
@@ -28,3 +28,5 @@ asciidoc:
     run: '\{run}'
     apiversion: '\{apiversion}'
     version: '\{version}'
+    apikey: '\{apikey}'
+    name: '\{name}'

@@ -36,8 +36,34 @@ pub struct RequestBlock {
     pub options: RequestOptions,
     #[serde(default)]
     pub assertions: Vec<ResponseAssertion>,
+    #[serde(default)]
+    pub captures: Vec<CaptureDirective>,
     pub response_redirect: Option<ResponseRedirect>,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureDirective {
+    pub variable: String,
+    pub source: CaptureSource,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaptureSource {
+    JsonPointer(String),
+    Header(String),
+    Status,
+}
+
+impl CaptureSource {
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::JsonPointer(p) => format!("json:{p}"),
+            Self::Header(h) => format!("header:{h}"),
+            Self::Status => "status".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

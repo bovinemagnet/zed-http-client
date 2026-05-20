@@ -2,7 +2,7 @@
 :toc: macro
 :toclevels: 2
 :source-highlighter: highlight.js
-:project-version: 0.4.3
+:project-version: 0.4.4
 
 A Zed editor extension and companion Rust CLI for running IntelliJ-style HTTP and GraphQL request files inside Zed or from the terminal.
 
@@ -104,8 +104,8 @@ cargo run -p zed-http-cli -- check --file examples/requests.http --env dev
 
 [source,bash]
 ----
-zed-http run --file requests.http [--line N | --name "Title"] [--env <name>]
-zed-http run-all --file requests.http [--env <name>] [--bail] [--output json]
+zed-http run --file requests.http [--line N | --name "Title"] [--env <name>] [--var k=v]
+zed-http run-all --file requests.http [--env <name>] [--bail] [--var k=v] [--output json]
 zed-http check --file requests.http [--env <name>]
 zed-http list --file requests.http
 zed-http envs --file requests.http
@@ -130,6 +130,8 @@ See the link:src/docs/modules/ROOT/pages/cli-reference.adoc[CLI reference] for t
 * Per-request options: `# @timeout`, `# @connection-timeout`, `# @no-redirect`, `# @fragments`.
 * Dynamic variables: `{{$uuid}}` (v7), `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}` — generated per request, consistent within a request, shadowable by user vars.
 * `zed-http run-all` executes every request in a file with a pass/fail summary, shared cookie jar, and `--bail` / `--output json` modes for CI.
+* Response variable capture: `# @capture <name> json:<pointer>` / `header:<name>` / `status` lifts a value out of the response into a variable that later requests in the same `run-all` reference as `{{name}}` — login → action workflows without a JS runtime.
+* `--var name=value` CLI flag (repeatable) overrides any variable from outside, e.g. `--var apiKey=$(security find-generic-password ...)`.
 * Canonical `zed-http format` round-trip, plus a `--check` mode for CI.
 * Postman v2.1 collection import via `zed-http import postman`.
 * curl import via `zed-http import curl` (positional, `--file`, or `--stdin`) — paste the "Copy as cURL" shape from browser devtools and get a canonical `.http` block back.

@@ -3,7 +3,7 @@
 
 The project follows the roadmap laid out in the initial PRD (section 11).
 Tiers v0.1 through v0.4 are now complete, including the {project-version} quality-of-life additions.
-The items from those tiers that were explicitly deferred — multipart bodies, JavaScript scripting, OAuth flows, and a custom Zed output pane — remain unscheduled; they are grouped under xref:#deferred[Deferred].
+The items from those tiers that were explicitly deferred — multipart bodies, JavaScript scripting, OAuth flows, a custom Zed output pane, and regex/substring extraction from captures — remain unscheduled; they are grouped under xref:#deferred[Deferred].
 
 == Completed tiers
 
@@ -60,19 +60,20 @@ _Shipped in releases 0.4.0 and 0.4.1._
 
 === v0.4.x — quality of life
 
-_Shipped in releases 0.4.1 and 0.4.2._
+_Shipped in releases 0.4.1, 0.4.2, and 0.4.4._
 
 * [x] `# @env` file-level directive (0.4.1) — see above
 * [x] Module-level documentation across the workspace (0.4.1) — every Rust source file carries a doc comment summarising its purpose
 * [x] xref:directives.adoc#dynamic-variables[Dynamic variables] (0.4.2) — `$uuid` (UUID v7), `$timestamp`, `$isoTimestamp`, `$randomInt`; user variables of the same name shadow the dynamic value for deterministic testing
 * [x] xref:cli-reference.adoc#run-all[`zed-http run-all`] (0.4.2) — executes every request in declaration order with a per-request `✓`/`✗` status line, a pass/failed/skipped summary, `--bail` support, and a shared cookie jar across all iterations
+* [x] xref:captures.adoc[Response variable capture] (0.4.4) — `# @capture <variable> json:<pointer>|header:<name>|status` lifts values out of each response into the variable map; `--var name=value` (repeatable) seeds the map from the CLI; sensitive keys masked in output; unresolvable captures warn rather than fail
 
 [[deferred]]
 == Deferred
 
 The v0.4 PRD tier is now substantially complete.
-The items that were listed in the PRD for v0.4 but not yet implemented are: multipart request bodies, JavaScript pre-/post-request scripts, OAuth flows, and a custom Zed output pane.
-All four remain unscheduled and are described below.
+The items that were listed in the PRD for v0.4 but not yet implemented are: multipart request bodies, JavaScript pre-/post-request scripts, OAuth flows, a custom Zed output pane, and the higher-fidelity capture extractions described below.
+All remain unscheduled.
 
 === Multipart / form-data request bodies
 
@@ -84,6 +85,17 @@ All four remain unscheduled and are described below.
 * [ ] Manual multipart syntax with `--BOUNDARY` markers (the JetBrains textual format for crafting multipart payloads by hand).
   Also deferred; depends on the same executor work.
 
+=== Response capture — higher-fidelity extraction
+
+`# @capture` shipped in 0.4.4 and handles the common cases (JSON Pointer, header value, status code).
+The following fidelity improvements remain deferred:
+
+* [ ] Regex / substring extraction — capture a sub-match from a header value or a JSON string rather than the full value.
+  Tracking for v0.5.
+* [ ] Persistence across `zed-http run` invocations — captures are currently in-memory only; they do not survive process exit.
+  Files that need cross-invocation state should use the xref:cookies.adoc[cookie jar] for now.
+* [ ] XML and `application/x-www-form-urlencoded` response extractors.
+
 === JavaScript scripting
 
 * [ ] JS pre-request scripts (`< {% ... %}`).
@@ -91,7 +103,8 @@ All four remain unscheduled and are described below.
   This is a significant lift with no concrete plan yet.
 
 * [ ] JS response handlers for extracting values across request chains.
-  Same runtime dependency as pre-request scripts.
+  Response variable capture (0.4.4) covers the declarative subset of this use-case.
+  Full JS scripting — conditional logic, looping, arbitrary computation — remains deferred and shares the same runtime dependency as pre-request scripts.
 
 === Authentication flows
 

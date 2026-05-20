@@ -23,6 +23,9 @@
 //! - [`validate`] — pre-flight checks before a request fires (variable
 //!   completeness, schema-aware field validation when a cache exists).
 //! - [`assertion`] — `# @expect-*` directives evaluated against a response.
+//! - [`capture`] — `# @capture` directives that lift JSON-pointer / header
+//!   / status values out of a response into variables, so later requests
+//!   in the same `run-all` invocation can reference them as `{{name}}`.
 //! - [`dynamic`] — IntelliJ-compatible `$`-prefixed variables (`$uuid`,
 //!   `$timestamp`, `$isoTimestamp`, `$randomInt`) generated fresh per
 //!   request and overridable by user-defined variables of the same name.
@@ -38,6 +41,7 @@
 //! - [`error`] — single [`error::HttpClientError`] type returned everywhere.
 
 pub mod assertion;
+pub mod capture;
 pub mod curl;
 pub mod dynamic;
 pub mod env;
@@ -54,11 +58,15 @@ pub mod schema;
 pub mod validate;
 
 pub use assertion::{evaluate_assertions, AssertionFailure, AssertionResponse};
+pub use capture::{evaluate_captures, CaptureOutcome, CaptureWarning};
 pub use curl::import_curl;
 pub use dynamic::build_dynamic_variables;
 pub use env::{list_environments, load_environment, mask_variables, VariableMap};
 pub use error::HttpClientError;
-pub use executor::{parse_and_select_request, prepare_request, RequestSelector, ResolvedRequest};
+pub use executor::{
+    parse_and_select_request, prepare_request, prepare_request_with_extras, RequestSelector,
+    ResolvedRequest,
+};
 pub use format::format_request_file;
 pub use graphql::{
     build_graphql_payload, introspection_payload, parse_variable_definitions, render_graphql_json,
@@ -66,8 +74,8 @@ pub use graphql::{
 };
 pub use interpolate::{interpolate_text, resolve_variables};
 pub use model::{
-    Header, InPlaceVariable, RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions,
-    ResponseAssertion, ResponseRedirect, SourceRange,
+    CaptureDirective, CaptureSource, Header, InPlaceVariable, RequestBlock, RequestBody,
+    RequestFile, RequestMethod, RequestOptions, ResponseAssertion, ResponseRedirect, SourceRange,
 };
 pub use output::{
     build_preview, cookie_jar_path, format_pretty_response, response_root, save_response,

@@ -29,8 +29,8 @@ use crate::{
     graphql::render_graphql_json_with_extras,
     interpolate::{interpolate_text, resolve_variables},
     model::{
-        RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions, ResponseAssertion,
-        ResponseRedirect,
+        CaptureDirective, RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions,
+        ResponseAssertion, ResponseRedirect,
     },
     parser::{parse_request_file, select_request_by_line, select_request_by_name},
 };
@@ -53,6 +53,7 @@ pub struct ResolvedRequest {
     pub body: Option<String>,
     pub options: RequestOptions,
     pub assertions: Vec<ResponseAssertion>,
+    pub captures: Vec<CaptureDirective>,
     pub response_redirect: Option<ResponseRedirect>,
     pub variables: VariableMap,
     pub range_start_line: usize,
@@ -87,17 +88,36 @@ pub fn prepare_request(
     env_name: Option<&str>,
     worktree_root: Option<&Path>,
 ) -> Result<ResolvedRequest, HttpClientError> {
+    prepare_request_with_extras(http_file, contents, selector, env_name, worktree_root, None)
+}
+
+pub fn prepare_request_with_extras(
+    http_file: &Path,
+    contents: &str,
+    selector: RequestSelector<'_>,
+    env_name: Option<&str>,
+    worktree_root: Option<&Path>,
+    extra_vars: Option<&VariableMap>,
+) -> Result<ResolvedRequest, HttpClientError> {
     let (request_file, request) = parse_and_select_request(contents, selector)?;
     let resolved_env = env_name.or(request_file.default_env.as_deref());
-    // Dynamic ($uuid, $timestamp, ...) is the base layer so users can
-    // shadow it with explicit env-file or in-file declarations when they
-    // want deterministic values for tests.
+    // Variable layering, low → high precedence:
+    //   1. Dynamic ($uuid, $timestamp, ...) so users can shadow them.
+    //   2. Env-file values for the selected environment.
+    //   3. In-file `@vars`.
+    //   4. CLI / runtime overrides (e.g. `--var key=value`, or captures
+    //      from earlier requests in a `run-all` invocation).
     let mut variables = build_dynamic_variables();
     for (key, value) in load_environment(http_file, worktree_root, resolved_env)? {
         variables.insert(key, value);
     }
     for variable in request_file.variables {
         variables.insert(variable.name, variable.value);
+    }
+    if let Some(extras) = extra_vars {
+        for (key, value) in extras {
+            variables.insert(key.clone(), value.clone());
+        }
     }
     let variables = resolve_variables(&variables);
 
@@ -178,6 +198,7 @@ pub fn prepare_request(
         body,
         options: request.options,
         assertions: request.assertions,
+        captures: request.captures,
         response_redirect,
         variables,
         range_start_line: request.range.start_line,

@@ -2308,11 +2308,12 @@ dependencies = [
 
 [[package]]
 name = "zed-http-cli"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
  "cookie_store 0.21.1",
+ "indexmap",
  "reqwest",
  "reqwest_cookie_store",
  "serde_json",
@@ -2322,7 +2323,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-core"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "base64",

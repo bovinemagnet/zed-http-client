@@ -1,0 +1,323 @@
+= Response Captures
+:description: Using # @capture to thread values from one response into later requests in a zed-http run-all invocation.
+
+Response captures are how a `run-all` invocation threads state between requests.
+Capture an access token from the login response, then reference `{{token}}` in the headers of every later request.
+No JavaScript runtime is needed — the directive is declarative, evaluated at response time, and lives alongside `# @expect-*` assertions in the section preamble.
+
+For the variable resolution stack that captures slot into, see xref:environments.adoc#variable-resolution-layers[Variable resolution layers].
+For the assertion directives that share the same preamble location, see xref:assertions.adoc[].
+
+[#where-captures-live]
+== Where captures live
+
+Capture directives are written in the *section preamble* — between the `###` separator and the request line — alongside any `# @expect-*` assertions:
+
+[source,http]
+----
+### Login
+# @expect-status 200
+# @capture token json:/access_token
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{"username": "alice", "password": "{{password}}"}
+----
+
+Captures are evaluated *after* the response body has been fully read, regardless of whether assertions passed.
+A request that fails a `# @expect-status` assertion still evaluates its captures; the captured value is available to subsequent requests in the same `run-all` invocation.
+
+[#source-forms]
+== Three source forms
+
+[#json-pointer-source]
+=== `json:<pointer>` — JSON Pointer into the response body
+
+Resolves a https://datatracker.ietf.org/doc/html/rfc6901[JSON Pointer (RFC 6901)] into the parsed response body.
+
+Syntax: `# @capture <name> json:<pointer>`
+
+The leading `/` is part of the pointer — `json:/access_token` addresses the top-level key `access_token`.
+
+[source,http]
+----
+# @capture token    json:/access_token
+# @capture userId   json:/user/id
+# @capture pageSize json:/meta/page_size
+# @capture active   json:/user/active
+# @capture nothing  json:/user/preferences/theme
+# @capture tags     json:/user/tags
+# @capture profile  json:/user/profile
+----
+
+Stringification rules applied to the resolved value:
+
+[cols="1,2,2",options="header"]
+|===
+| JSON type | Example value | Captured string
+
+| `string`
+| `"abc123"`
+| `abc123`
+
+| `number`
+| `42` or `3.14`
+| `42` or `3.14`
+
+| `boolean`
+| `true` or `false`
+| `true` or `false`
+
+| `null`
+| `null`
+| `null`
+
+| `array`
+| `["read","write"]`
+| `["read","write"]`
+
+| `object`
+| `{"role":"admin"}`
+| `{"role":"admin"}`
+|===
+
+Arrays and objects are re-serialised with `serde_json::to_string` so the raw JSON snippet can still be threaded through `{{var}}` interpolation into a later request body.
+
+[#header-source]
+=== `header:<name>` — response header lookup
+
+Captures the value of a named response header.
+The lookup is case-insensitive.
+
+Syntax: `# @capture <name> header:<header-name>`
+
+[source,http]
+----
+# @capture requestId header:X-Request-Id
+# @capture sessionCookie header:Set-Cookie
+----
+
+When the response carries *multiple* headers with the same name, all values are joined with `, ` (the standard comma-separated merge semantics HTTP uses for cacheable headers):
+
+[source,http]
+----
+# @capture allCookies header:Set-Cookie
+----
+
+If `Set-Cookie: session=abc` and `Set-Cookie: tracking=xyz` are both present, `allCookies` is captured as `session=abc, tracking=xyz`.
+
+[#status-source]
+=== `status` — HTTP status code
+
+Captures the three-digit response status code as a string.
+
+Syntax: `# @capture <name> status`
+
+[source,http]
+----
+# @capture httpCode status
+----
+
+If the server responds with `201 Created`, `httpCode` is captured as `201`.
+
+[#lifetime-and-scope]
+== Lifetime and scope
+
+Captures live only for the duration of one CLI process — they are held in memory and never written to a file.
+
+=== In `zed-http run`
+
+Captures are evaluated and the resulting values appear in `--output json` (in the `response.captured` map and `response.capture_warnings` array, see xref:#json-output[JSON output]).
+They do not influence the single request being executed, and they are not persisted after the process exits.
+
+=== In `zed-http run-all`
+
+This is the primary use-case.
+Captures accumulate across iterations: the initial variable map is seeded with any `--var` overrides you provide; each request's captures are merged on top before the *next* request is prepared.
+Request 2 can therefore reference a token that request 1 captured.
+
+The shared cookie jar and the capture overlay are complementary: the cookie jar handles session cookies automatically; captures handle explicit values that your application places in the response body or non-cookie headers.
+
+[#worked-example]
+== Worked example — login flow
+
+Given a two-request `.http` file:
+
+[source,http]
+----
+### Login
+# @expect-status 200
+# @capture token json:/access_token
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "{{password}}"
+}
+
+### Get profile
+# @expect-status 200
+GET {{host}}/api/me
+Authorization: Bearer {{token}}
+----
+
+Run it with:
+
+[source,bash]
+----
+zed-http run-all --file login.http --env dev
+----
+
+Pretty output (abbreviated):
+
+----
+login.http
+  ✓ Login                          200 OK                   54ms
+      captured token = ***
+  ✓ Get profile                    200 OK                   31ms
+
+2 requests: 2 passed, 0 failed
+----
+
+The `***` display is explained in xref:#secret-masking[Secret masking] below.
+
+With `--output json`, the per-request entry includes:
+
+[source,json]
+----
+{
+  "index": 1,
+  "name": "Login",
+  "ok": true,
+  "status_code": 200,
+  "status": "200 OK",
+  "duration_ms": 54,
+  "assertion_failures": [],
+  "captured": {
+    "token": "***"
+  },
+  "capture_warnings": []
+}
+----
+
+[NOTE]
+====
+The `captured` map in JSON output uses the masked value for sensitive keys (see xref:#secret-masking[Secret masking]).
+The wire request for "Get profile" uses the unmasked value — masking is display-only.
+====
+
+[#json-output]
+== JSON output shape
+
+Both `zed-http run` and `zed-http run-all` include capture information in `--output json`.
+
+For `zed-http run`, the `response` object gains:
+
+[source,json]
+----
+{
+  "response": {
+    "status": "200 OK",
+    "captured": {
+      "token": "***"
+    },
+    "capture_warnings": []
+  }
+}
+----
+
+For `zed-http run-all`, each entry in `requests[]` includes the same `captured` map and `capture_warnings` array.
+
+[#secret-masking]
+== Secret masking
+
+Capture values whose *key* contains any of the following substrings (case-insensitive) are displayed as `***` in pretty and JSON output:
+
+* `token`
+* `secret`
+* `password`
+* `apikey`
+* `api_key`
+* `authorization`
+
+The masking applies to the terminal summary line (`captured token = ***`) and to the `captured` map in `--output json`.
+Wire requests still use the unmasked value — masking is purely a display safeguard.
+
+This uses the same matching heuristic as the env-file variable masking described in xref:environments.adoc[Environments and variables].
+
+[#warnings]
+== Warnings, not errors
+
+An unresolvable capture emits a *warning* but does not fail the request.
+The `capture_warnings` array (in JSON) or the indented diagnostic line (in pretty mode) carries the detail.
+
+The four warning conditions are:
+
+[cols="1,3",options="header"]
+|===
+| Condition | Message shape
+
+| Header not present
+| `header '<name>' was not present`
+
+| JSON Pointer did not resolve
+| `JSON pointer '<pointer>' did not resolve`
+
+| Response body is not valid JSON
+| `response body was not JSON: <parse error>`
+
+| General skip (CLI prefix)
+| `<file>:<line>: capture <variable> skipped: <reason>`
+|===
+
+In pretty mode each skipped capture appears as an indented line below the request:
+
+----
+  ✗ Login                          200 OK                   54ms
+      capture token skipped: JSON pointer '/access_token' did not resolve
+----
+
+The design choice is deliberate: a missing capture is most often caused by a flaky upstream or a field that moved in a response schema, not a configuration bug that should abort the entire run.
+Fix the source directive once you have confirmed the correct pointer; in the meantime the remaining requests in the file continue to execute.
+
+NOTE: The `--no-validate` flag controls *parse-time* validation only.
+It does not suppress capture warnings, which are *runtime* events evaluated against the live response.
+
+[#composing-with-var]
+== Composing with `--var`
+
+The `--var name=value` flag (repeatable) seeds the variable map before any request runs.
+Captures from each response are merged on top of that seed, so the natural workflow is:
+
+[source,bash]
+----
+zed-http run-all \
+  --file workflow.http \
+  --env prod \
+  --var apiKey=$(security find-generic-password -s my-app -w)
+----
+
+`apiKey` is available from request 1 onwards via `{{apiKey}}`.
+Any `# @capture` directives in subsequent requests overlay on top — they do not clear the initial `--var` seed.
+
+For the full five-layer variable stack, see xref:environments.adoc#variable-resolution-layers[Variable resolution layers].
+For `--var` flag details in the CLI reference, see xref:cli-reference.adoc#run[`zed-http run`] and xref:cli-reference.adoc#run-all[`zed-http run-all`].
+
+[#limitations]
+== Limitations
+
+No regex or substring extraction::
+`json:<pointer>` captures the entire value at that pointer location.
+There is no way to extract a substring or apply a regular expression to the captured text.
+If you need the second path segment of `/api/v2/users/123`, you cannot capture just `123` — you would need a `json:` pointer that already targets a field containing `123` directly.
+Regex extraction is tracked for v0.5.
+
+No cross-invocation persistence::
+Captures live only within a single `run-all` process.
+They are not written to a sidecar file and do not carry over into a subsequent `zed-http run` or `zed-http run-all` invocation.
+For state that must survive across invocations (e.g. a long-lived session cookie), use the cookie jar — see xref:cookies.adoc[Persistent cookies].
+
+No XML or form-encoded extractors::
+Only `json:`, `header:`, and `status` sources are supported.
+XML and `application/x-www-form-urlencoded` response bodies cannot be captured directly; parse a JSON endpoint or capture a header that carries the value you need.

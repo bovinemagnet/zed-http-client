@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-05-20
+
+Closes the response-capture gap that has been sitting next to `run-all`
+since 0.4.2. Multi-step login → action flows now work end-to-end
+without writing any glue script.
+
+### Added
+
+- `# @capture <variable> <source>` request-option directive lifts a
+  value out of the response into a variable that later requests in the
+  same `run-all` invocation can reference as `{{name}}`. Three source
+  forms:
+  - `json:<pointer>` — JSON Pointer into the response body. Strings,
+    numbers, booleans, and `null` are stringified as-is; arrays and
+    objects are re-serialised as JSON so the raw snippet can still be
+    threaded through interpolation.
+  - `header:<name>` — case-insensitive header lookup. Multiple matching
+    headers are joined with `, ` (matches the standard merge semantics
+    HTTP uses for cacheable headers).
+  - `status` — three-digit status code as a string.
+  - Captures whose key contains `token`, `secret`, `password`, `apikey`,
+    `api_key`, or `authorization` are masked as `***` in terminal and
+    JSON output. The wire request still uses the unmasked value.
+  - Unresolvable captures (pointer didn't resolve, header missing,
+    body wasn't JSON) emit a `<file>:<line>: capture <name> skipped:
+    <reason>` warning but do *not* fail the run.
+- `--var name=value` CLI flag on `run` and `run-all`, repeatable.
+  Overrides every other layer in the variable stack (env files, in-file
+  `@vars`, dynamic vars). Useful for seeding a fresh token from outside:
+  `zed-http run-all --file login.http --var apiKey=$(security find-...)`.
+- The variable resolution stack is now five layers, low → high
+  precedence: dynamic vars, env-file public, env-file private, in-file
+  `@vars`, then `--var` / captures.
+- `zed-http format` round-trips `# @capture` directives.
+- Public core API: `evaluate_captures`, `CaptureOutcome`,
+  `CaptureWarning`, `CaptureDirective`, `CaptureSource`,
+  `prepare_request_with_extras` (the new entry point that accepts an
+  `extra_vars` overlay; `prepare_request` keeps its old signature and
+  delegates).
+
+### Diagnostics
+
+- `@capture <variable> <source>` rejects missing variable name with
+  `@capture variable name was empty`, line-numbered.
+- Unknown source spec emits `@capture source must be one of
+  json:<pointer>, header:<name>, status (got '<spec>')`, line-numbered.
+- `--var name=value` errors at CLI parse time if the equals sign is
+  missing or the name is blank.
+
 ## [0.4.3] - 2026-05-20
 
 Adds curl import. Paste the "Copy as cURL" output from browser devtools

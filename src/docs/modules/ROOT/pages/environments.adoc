@@ -40,7 +40,7 @@ Each later step overrides values from the steps before it:
 . *Public env file* — keys from `http-client.env.json` under the selected environment name.
 . *Private env file* — keys from `http-client.private.env.json` under the same environment name, overlaid on top of the public values.
 . *In-file variables* — `@name = value` declarations in the request file preamble always override all of the above.
-. _(Reserved)_ CLI per-variable overrides are not yet exposed as a flag.
+. *CLI overrides and captures* — `--var name=value` flags supplied on the command line, and any `# @capture` results accumulated from earlier requests in the same `zed-http run-all` invocation.
 
 This layering means you can commit placeholder values in `http-client.env.json` and provide real secrets by adding matching keys in `http-client.private.env.json`, with no changes to the request file.
 
@@ -122,7 +122,7 @@ Running `zed-http run --file requests.http --line 5 --env prod` overrides the di
 [[variable-resolution-layers]]
 == Variable resolution layers
 
-As of {project-version}, four sources contribute variables to every request.
+As of {project-version}, five sources contribute variables to every request.
 Each source can override values from the one before it:
 
 [cols="1,1,4",options="header"]
@@ -142,9 +142,14 @@ Each source can override values from the one before it:
 | Private env file
 | `http-client.private.env.json` under the same name — only overrides keys it declares.
 
-| 4 (top)
+| 4
 | In-file declarations
 | `@name = value` lines in the file preamble (before the first `###`).
+
+| 5 (top)
+| CLI overrides and captures
+| `--var name=value` flags on the command line (repeatable; when the same name is given more than once, the last value wins), plus any `# @capture` results accumulated from earlier requests in the same `zed-http run-all` invocation.
+  See xref:captures.adoc[Response captures] for the capture half of this layer.
 |===
 
 Because user-defined values sit above the dynamic layer, you can pin any dynamic variable for deterministic tests.

@@ -19,8 +19,9 @@
 use crate::{
     error::HttpClientError,
     model::{
-        Header, InPlaceVariable, RequestBlock, RequestBody, RequestFile, RequestMethod,
-        RequestOptions, ResponseAssertion, ResponseRedirect, SourceRange,
+        CaptureDirective, CaptureSource, Header, InPlaceVariable, RequestBlock, RequestBody,
+        RequestFile, RequestMethod, RequestOptions, ResponseAssertion, ResponseRedirect,
+        SourceRange,
     },
 };
 
@@ -168,6 +169,7 @@ fn parse_section(
     let mut cursor = 0usize;
     let mut options = RequestOptions::default();
     let mut assertions: Vec<ResponseAssertion> = Vec::new();
+    let mut captures: Vec<CaptureDirective> = Vec::new();
     while cursor < lines.len() {
         let (line_no, line) = lines[cursor];
         let trimmed = line.trim();
@@ -176,7 +178,13 @@ fn parse_section(
             continue;
         }
         if let Some(directive) = parse_option_directive(line) {
-            apply_directive(&mut options, &mut assertions, &directive, line_no)?;
+            apply_directive(
+                &mut options,
+                &mut assertions,
+                &mut captures,
+                &directive,
+                line_no,
+            )?;
             cursor += 1;
             continue;
         }
@@ -247,6 +255,7 @@ fn parse_section(
         body,
         options,
         assertions,
+        captures,
         response_redirect,
         range: SourceRange {
             start_line: request_line_no,
@@ -292,6 +301,7 @@ fn parse_option_directive(line: &str) -> Option<OptionDirective> {
 fn apply_directive(
     options: &mut RequestOptions,
     assertions: &mut Vec<ResponseAssertion>,
+    captures: &mut Vec<CaptureDirective>,
     directive: &OptionDirective,
     line: usize,
 ) -> Result<(), HttpClientError> {
@@ -386,11 +396,69 @@ fn apply_directive(
                 line,
             });
         }
+        "capture" => {
+            let raw = directive
+                .value
+                .as_deref()
+                .ok_or_else(|| HttpClientError::InvalidOption {
+                    line,
+                    content: "@capture requires '<variable> <source>'".to_string(),
+                })?;
+            let (variable, spec) = raw.split_once(char::is_whitespace).ok_or_else(|| {
+                HttpClientError::InvalidOption {
+                    line,
+                    content: "@capture requires '<variable> <source>'".to_string(),
+                }
+            })?;
+            let variable = variable.trim();
+            if variable.is_empty() {
+                return Err(HttpClientError::InvalidOption {
+                    line,
+                    content: "@capture variable name was empty".to_string(),
+                });
+            }
+            let source = parse_capture_source(spec.trim(), line)?;
+            captures.push(CaptureDirective {
+                variable: variable.to_string(),
+                source,
+                line,
+            });
+        }
         _ => {
             // Unknown directives are ignored, mirroring JetBrains' forward-compatible behaviour.
         }
     }
     Ok(())
+}
+
+fn parse_capture_source(spec: &str, line: usize) -> Result<CaptureSource, HttpClientError> {
+    if spec.eq_ignore_ascii_case("status") {
+        return Ok(CaptureSource::Status);
+    }
+    if let Some(pointer) = spec.strip_prefix("json:") {
+        if pointer.is_empty() {
+            return Err(HttpClientError::InvalidOption {
+                line,
+                content: "@capture json: source needs a JSON pointer".to_string(),
+            });
+        }
+        return Ok(CaptureSource::JsonPointer(pointer.to_string()));
+    }
+    if let Some(name) = spec.strip_prefix("header:") {
+        if name.is_empty() {
+            return Err(HttpClientError::InvalidOption {
+                line,
+                content: "@capture header: source needs a header name".to_string(),
+            });
+        }
+        return Ok(CaptureSource::Header(name.to_string()));
+    }
+    Err(HttpClientError::InvalidOption {
+        line,
+        content: format!(
+            "@capture source must be one of json:<pointer>, header:<name>, status (got '{spec}')"
+        ),
+    })
 }
 
 fn parse_duration_ms(directive: &OptionDirective, line: usize) -> Result<u64, HttpClientError> {
@@ -615,6 +683,51 @@ Content-Type: application/json
         assert_eq!(options.timeout_ms, Some(1500));
         assert_eq!(options.connection_timeout_ms, Some(250));
         assert!(options.no_redirect);
+    }
+
+    #[test]
+    fn parses_capture_directives_for_all_sources() {
+        let input = concat!(
+            "### Login\n",
+            "# @capture token json:/access_token\n",
+            "# @capture sid header:Set-Cookie\n",
+            "# @capture code status\n",
+            "POST https://example.com/login\n",
+        );
+        let file = parse_request_file(input).unwrap();
+        let captures = &file.requests[0].captures;
+        assert_eq!(captures.len(), 3);
+        assert_eq!(captures[0].variable, "token");
+        matches!(captures[0].source, CaptureSource::JsonPointer(ref p) if p == "/access_token");
+        assert_eq!(captures[1].variable, "sid");
+        matches!(captures[1].source, CaptureSource::Header(ref h) if h == "Set-Cookie");
+        assert_eq!(captures[2].variable, "code");
+        matches!(captures[2].source, CaptureSource::Status);
+    }
+
+    #[test]
+    fn rejects_capture_with_missing_value() {
+        let input = "### Bad\n# @capture\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, content } => {
+                assert_eq!(line, 2);
+                assert!(content.contains("@capture requires"));
+            }
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_capture_with_unknown_source() {
+        let input = "### Bad\n# @capture token body:/foo\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { content, .. } => {
+                assert!(content.contains("must be one of"));
+            }
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
     }
 
     #[test]

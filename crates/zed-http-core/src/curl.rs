@@ -228,6 +228,7 @@ fn build_request_block(
         body,
         options: Default::default(),
         assertions: Vec::new(),
+        captures: Vec::new(),
         response_redirect: None,
         range: SourceRange {
             start_line: 0,

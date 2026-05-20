@@ -44,6 +44,7 @@ zed-http run --file <path>
              [--no-validate]
              [--no-cookies]
              [--cookie-jar <path>]
+             [--var <NAME=VALUE>]...
 ----
 
 === Description
@@ -109,6 +110,10 @@ See xref:assertions.adoc[Response assertions] and xref:cookies.adoc[Persistent c
 |`--cookie-jar <path>`
 |path, optional
 |Override the cookie jar file location. Defaults to `<base>/.zed-http/cookies.json`.
+
+|`--var <NAME=VALUE>`
+|string, repeatable
+|Override a variable for this invocation. Wins over every other layer (env files, in-file `@vars`, dynamic vars). Repeatable — `--var host=https://staging.example.com --var token=abc`. When the same name is given more than once, the last occurrence wins. See xref:environments.adoc#variable-resolution-layers[Variable resolution layers].
 |===
 
 [[json-output-envelope]]
@@ -130,13 +135,19 @@ The JSON envelope emitted by `--output json` has the following shape:
     "saved_path": ".zed-http/responses/2026-05-20T14-32-10-list-users.json",
     "redirect_path": null,
     "body": { ... },
-    "assertion_failures": []
+    "assertion_failures": [],
+    "captured": {},
+    "capture_warnings": []
   }
 }
 ----
 
 `response.assertion_failures` is a non-empty array when any `# @expect-*` directive is violated.
 Each entry has `line` (source line in the `.http` file) and `message` fields.
+
+`response.captured` is a map of variable name to captured value (masked with `***` for sensitive keys — see xref:captures.adoc#secret-masking[Secret masking]).
+`response.capture_warnings` is an array of `{variable, line, message}` objects for any captures that could not be resolved.
+See xref:captures.adoc[] for the full reference.
 
 === Exit codes
 
@@ -170,6 +181,7 @@ zed-http run-all --file <path>
                  [--no-validate]
                  [--no-cookies]
                  [--cookie-jar <path>]
+                 [--var <NAME=VALUE>]...
 ----
 
 === Description
@@ -228,7 +240,9 @@ In `json` mode the command emits a single JSON object:
       "status": "200 OK",
       "duration_ms": 42,
       "error": null,
-      "assertion_failures": []
+      "assertion_failures": [],
+      "captured": {},
+      "capture_warnings": []
     }
   ]
 }
@@ -236,6 +250,9 @@ In `json` mode the command emits a single JSON object:
 
 `summary.bailed_at` is a 1-based request index when `--bail` triggered early termination, otherwise `null`.
 `requests[].assertion_failures` follows the same `{line, message}` shape as the `run` JSON envelope.
+`requests[].captured` is a map of variable name to captured value; sensitive keys are masked with `***`.
+`requests[].capture_warnings` is an array of `{variable, line, message}` objects for any captures that did not resolve.
+See xref:captures.adoc[] for the full reference.
 
 ==== Raw output
 
@@ -290,6 +307,12 @@ Useful for post-processing with `awk`, `grep`, or a CI log parser.
 |Override the cookie jar file location. Defaults to `<base>/.zed-http/cookies.json`.
   The jar is loaded once at the start of the run, shared across all requests, and persisted once at the end.
   This is what makes a login request at position 1 supply credentials to action requests at positions 2, 3, etc.
+
+|`--var <NAME=VALUE>`
+|string, repeatable
+|Seed the variable map before request 1 runs. Repeatable. `# @capture` results from each response are merged on top of this seed as the run progresses, so later requests can reference both the initial seeds and the captured values.
+  When the same name is given more than once, the last `--var` occurrence wins.
+  See xref:captures.adoc#composing-with-var[Composing with `--var`] and xref:environments.adoc#variable-resolution-layers[Variable resolution layers].
 |===
 
 === Exit codes

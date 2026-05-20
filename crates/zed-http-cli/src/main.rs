@@ -40,12 +40,13 @@ use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
-    build_preview, cookie_jar_path, evaluate_assertions, format_pretty_response,
+    build_preview, cookie_jar_path, evaluate_assertions, evaluate_captures, format_pretty_response,
     format_request_file, import_curl, import_postman_collection, introspection_payload,
     list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
-    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
-    validate_request_with_schema, AssertionResponse, RequestMethod, RequestSelector,
-    ResolvedRequest, ResponseSummary, ValidationIssue,
+    prepare_request_with_extras, response_root, save_response, schema_root, schema_slug,
+    validate_request_file_with_schemas, validate_request_with_schema, AssertionResponse,
+    CaptureWarning, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
+    ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -84,6 +85,10 @@ enum Commands {
         no_cookies: bool,
         #[arg(long)]
         cookie_jar: Option<PathBuf>,
+        /// Override variables: `--var name=value`, repeatable. Wins over
+        /// every other layer (env files, in-file @vars, dynamic vars).
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        var: Vec<String>,
     },
     Check {
         #[arg(long)]
@@ -110,6 +115,10 @@ enum Commands {
         no_cookies: bool,
         #[arg(long)]
         cookie_jar: Option<PathBuf>,
+        /// Seed variables: `--var name=value`, repeatable. Captures from
+        /// earlier requests in this run-all invocation accumulate on top.
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        var: Vec<String>,
     },
     List {
         #[arg(long)]
@@ -217,7 +226,9 @@ async fn main() -> Result<()> {
             no_validate,
             no_cookies,
             cookie_jar,
+            var,
         } => {
+            let var_overrides = parse_var_overrides(&var)?;
             run_command(RunOptions {
                 file: &file,
                 line,
@@ -229,6 +240,7 @@ async fn main() -> Result<()> {
                 no_validate,
                 no_cookies,
                 cookie_jar: cookie_jar.as_deref(),
+                var_overrides: &var_overrides,
             })
             .await
         }
@@ -246,7 +258,9 @@ async fn main() -> Result<()> {
             no_validate,
             no_cookies,
             cookie_jar,
+            var,
         } => {
+            let var_overrides = parse_var_overrides(&var)?;
             run_all_command(RunAllOptions {
                 file: &file,
                 env: env.as_deref(),
@@ -256,6 +270,7 @@ async fn main() -> Result<()> {
                 no_validate,
                 no_cookies,
                 cookie_jar: cookie_jar.as_deref(),
+                var_overrides: &var_overrides,
             })
             .await
         }
@@ -710,6 +725,44 @@ struct RunOptions<'a> {
     no_validate: bool,
     no_cookies: bool,
     cookie_jar: Option<&'a Path>,
+    var_overrides: &'a VariableMap,
+}
+
+type VariableMap = indexmap::IndexMap<String, String>;
+
+fn mask_capture(name: &str, value: &str) -> String {
+    // Reuse the env-file masking heuristic so a captured `token` is shown
+    // as `***` in both terminal output and the JSON envelope. Wire-side
+    // requests still use the unmasked value.
+    let lower = name.to_ascii_lowercase();
+    let sensitive = [
+        "token",
+        "secret",
+        "password",
+        "apikey",
+        "api_key",
+        "authorization",
+    ];
+    if sensitive.iter().any(|needle| lower.contains(needle)) && !value.is_empty() {
+        "***".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn parse_var_overrides(pairs: &[String]) -> Result<VariableMap> {
+    let mut map = VariableMap::new();
+    for raw in pairs {
+        let (name, value) = raw
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--var must be NAME=VALUE; got '{raw}'"))?;
+        let name = name.trim();
+        if name.is_empty() {
+            anyhow::bail!("--var name was empty in '{raw}'");
+        }
+        map.insert(name.to_string(), value.to_string());
+    }
+    Ok(map)
 }
 
 async fn run_command(opts: RunOptions<'_>) -> Result<()> {
@@ -724,6 +777,7 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         no_validate,
         no_cookies,
         cookie_jar,
+        var_overrides,
     } = opts;
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
@@ -733,8 +787,15 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         (None, None) => RequestSelector::First,
     };
 
-    let resolved = prepare_request(file, &contents, selector, env, worktree)
-        .with_context(|| format!("failed to prepare request from {}", file.display()))?;
+    let resolved = prepare_request_with_extras(
+        file,
+        &contents,
+        selector,
+        env,
+        worktree,
+        Some(var_overrides),
+    )
+    .with_context(|| format!("failed to prepare request from {}", file.display()))?;
 
     if !no_validate {
         let parsed = parse_request_file(&contents)
@@ -795,6 +856,21 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
             if let Some(path) = &outcome.redirect_path {
                 println!("Response redirect:\n{}", path.display());
             }
+            if !outcome.captured.is_empty() {
+                println!("Captured:");
+                for (key, value) in &outcome.captured {
+                    println!("  {key} = {}", mask_capture(key, value));
+                }
+            }
+            for warning in &outcome.capture_warnings {
+                eprintln!(
+                    "  {}:{}: capture {} skipped: {}",
+                    file.display(),
+                    warning.line,
+                    warning.variable,
+                    warning.message
+                );
+            }
             if !outcome.assertion_failures.is_empty() {
                 eprintln!("\nAssertion failures:");
                 for failure in &outcome.assertion_failures {
@@ -823,6 +899,17 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
                     "assertion_failures": outcome.assertion_failures
                         .iter()
                         .map(|f| json!({ "line": f.line, "message": f.message }))
+                        .collect::<Vec<_>>(),
+                    "captured": outcome.captured.iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(mask_capture(k, v))))
+                        .collect::<serde_json::Map<_, _>>(),
+                    "capture_warnings": outcome.capture_warnings
+                        .iter()
+                        .map(|w| json!({
+                            "variable": w.variable,
+                            "line": w.line,
+                            "message": w.message,
+                        }))
                         .collect::<Vec<_>>(),
                 }
             });
@@ -855,6 +942,8 @@ struct RequestOutcome {
     body_text: String,
     body_preview: String,
     assertion_failures: Vec<zed_http_core::AssertionFailure>,
+    captured: VariableMap,
+    capture_warnings: Vec<CaptureWarning>,
 }
 
 struct RunAllOptions<'a> {
@@ -866,6 +955,7 @@ struct RunAllOptions<'a> {
     no_validate: bool,
     no_cookies: bool,
     cookie_jar: Option<&'a Path>,
+    var_overrides: &'a VariableMap,
 }
 
 async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
@@ -878,6 +968,7 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
         no_validate,
         no_cookies,
         cookie_jar,
+        var_overrides,
     } = opts;
 
     let contents =
@@ -928,6 +1019,9 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
     let total = parsed.requests.len();
     let mut results: Vec<RunAllEntry> = Vec::with_capacity(total);
     let mut bailed_at: Option<usize> = None;
+    // Accumulated extras layer: CLI --var seeds it, captures from earlier
+    // requests overlay on top.
+    let mut extras: VariableMap = var_overrides.clone();
 
     let pretty = matches!(output_mode, OutputMode::Pretty);
     if pretty {
@@ -940,12 +1034,13 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
             .clone()
             .unwrap_or_else(|| format!("Unnamed request at line {}", request.range.start_line));
 
-        let resolved = match prepare_request(
+        let resolved = match prepare_request_with_extras(
             file,
             &contents,
             RequestSelector::Line(request.range.start_line),
             env,
             worktree,
+            Some(&extras),
         ) {
             Ok(resolved) => resolved,
             Err(err) => {
@@ -965,6 +1060,8 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
                     duration_ms: None,
                     error: Some(message),
                     assertion_failures: Vec::new(),
+                    captured: Vec::new(),
+                    capture_warnings: Vec::new(),
                 });
                 if bail {
                     bailed_at = Some(idx + 1);
@@ -994,6 +1091,8 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
                     duration_ms: None,
                     error: Some(message),
                     assertion_failures: Vec::new(),
+                    captured: Vec::new(),
+                    capture_warnings: Vec::new(),
                 });
                 if bail {
                     bailed_at = Some(idx + 1);
@@ -1002,6 +1101,18 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
                 continue;
             }
         };
+
+        // Merge captures from this request into the running extras layer
+        // so a later request can reference them via {{name}}.
+        for (key, value) in &outcome.captured {
+            extras.insert(key.clone(), value.clone());
+        }
+        let captured_for_entry: Vec<(String, String)> = outcome
+            .captured
+            .iter()
+            .map(|(k, v)| (k.clone(), mask_capture(k, v)))
+            .collect();
+        let capture_warnings_for_entry = outcome.capture_warnings.clone();
 
         let ok = outcome.status_code < 400 && outcome.assertion_failures.is_empty();
         if pretty {
@@ -1018,6 +1129,15 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
                     failure.message
                 );
             }
+            for (key, value) in &captured_for_entry {
+                println!("      captured {key} = {value}");
+            }
+            for warning in &capture_warnings_for_entry {
+                println!(
+                    "      capture {} skipped: {}",
+                    warning.variable, warning.message
+                );
+            }
         }
         let entry = RunAllEntry {
             index: idx + 1,
@@ -1028,6 +1148,8 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
             ok,
             status_code: Some(outcome.status_code),
             status_line: Some(outcome.status_line.clone()),
+            captured: captured_for_entry,
+            capture_warnings: capture_warnings_for_entry,
             duration_ms: Some(outcome.duration_ms),
             error: None,
             assertion_failures: outcome.assertion_failures.clone(),
@@ -1099,6 +1221,16 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
                     "assertion_failures": entry.assertion_failures.iter()
                         .map(|f| json!({ "line": f.line, "message": f.message }))
                         .collect::<Vec<_>>(),
+                    "captured": entry.captured.iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect::<serde_json::Map<_, _>>(),
+                    "capture_warnings": entry.capture_warnings.iter()
+                        .map(|w| json!({
+                            "variable": w.variable,
+                            "line": w.line,
+                            "message": w.message,
+                        }))
+                        .collect::<Vec<_>>(),
                 })).collect::<Vec<_>>(),
             });
             println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -1124,6 +1256,8 @@ struct RunAllEntry {
     duration_ms: Option<u128>,
     error: Option<String>,
     assertion_failures: Vec<zed_http_core::AssertionFailure>,
+    captured: Vec<(String, String)>,
+    capture_warnings: Vec<CaptureWarning>,
 }
 
 async fn execute_resolved_request(
@@ -1163,14 +1297,13 @@ async fn execute_resolved_request(
     let body_bytes = response.bytes().await?;
     let body_text = String::from_utf8_lossy(&body_bytes).to_string();
 
-    let assertion_failures = evaluate_assertions(
-        &resolved.assertions,
-        &AssertionResponse {
-            status: status.as_u16(),
-            headers: &header_pairs,
-            body: &body_text,
-        },
-    );
+    let response_view = AssertionResponse {
+        status: status.as_u16(),
+        headers: &header_pairs,
+        body: &body_text,
+    };
+    let assertion_failures = evaluate_assertions(&resolved.assertions, &response_view);
+    let capture_outcome = evaluate_captures(&resolved.captures, &response_view);
     let save_dir = response_root(file, worktree);
     let saved_path = save_response(
         &save_dir,
@@ -1202,6 +1335,8 @@ async fn execute_resolved_request(
         body_text,
         body_preview,
         assertion_failures,
+        captured: capture_outcome.captured,
+        capture_warnings: capture_outcome.warnings,
     })
 }
 

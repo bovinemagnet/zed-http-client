@@ -8,7 +8,8 @@
 //! back. Document-level comments outside requests are likewise dropped.
 
 use crate::model::{
-    RequestBlock, RequestBody, RequestFile, RequestOptions, ResponseAssertion, ResponseRedirect,
+    CaptureDirective, RequestBlock, RequestBody, RequestFile, RequestOptions, ResponseAssertion,
+    ResponseRedirect,
 };
 
 pub fn format_request_file(file: &RequestFile) -> String {
@@ -54,6 +55,7 @@ fn format_request(output: &mut String, request: &RequestBlock) {
 
     format_options(output, &request.options);
     format_assertions(output, &request.assertions);
+    format_captures(output, &request.captures);
 
     output.push_str(&format!("{} {}\n", request.method.as_str(), request.url));
 
@@ -120,6 +122,16 @@ fn format_assertions(output: &mut String, assertions: &[ResponseAssertion]) {
     }
 }
 
+fn format_captures(output: &mut String, captures: &[CaptureDirective]) {
+    for capture in captures {
+        output.push_str(&format!(
+            "# @capture {} {}\n",
+            capture.variable,
+            capture.source.as_string()
+        ));
+    }
+}
+
 fn format_response_redirect(output: &mut String, redirect: &ResponseRedirect) {
     let marker = if redirect.force_overwrite {
         ">>!"
@@ -160,6 +172,18 @@ mod tests {
         assert!(formatted.contains("# @no-redirect"));
         assert!(formatted.contains("< ./body.json"));
         assert!(formatted.contains(">>! ./out.json"));
+    }
+
+    #[test]
+    fn round_trips_capture_directives() {
+        let input = "### Login\n# @capture token json:/access_token\n# @capture sid header:Set-Cookie\n# @capture code status\nPOST https://example.com/login\n";
+        let parsed = parse_request_file(input).unwrap();
+        let formatted = format_request_file(&parsed);
+        let reparsed = parse_request_file(&formatted).unwrap();
+        assert_eq!(parsed, reparsed);
+        assert!(formatted.contains("# @capture token json:/access_token"));
+        assert!(formatted.contains("# @capture sid header:Set-Cookie"));
+        assert!(formatted.contains("# @capture code status"));
     }
 
     #[test]
