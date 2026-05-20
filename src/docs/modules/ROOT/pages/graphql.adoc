@@ -1,0 +1,288 @@
+= GraphQL Requests
+:description: Writing, validating, and introspecting GraphQL requests with zed-http-client.
+
+`zed-http-client` treats `GRAPHQL` as a first-class pseudo-method.
+Under the hood the CLI maps it to an HTTP `POST` with the canonical `{"query", "variables", "operationName"}` JSON payload.
+Variable validation runs at parse time on every `GRAPHQL` block; schema-aware field validation kicks in automatically whenever a cached schema exists for the endpoint.
+
+== Writing a GRAPHQL request
+
+A GRAPHQL request block follows the same `###`-separator structure as any other request.
+The method token is `GRAPHQL`, followed by the endpoint URL.
+Headers come next, then a blank line, then the GraphQL operation, then an optional blank-line-separated JSON object that supplies variable values.
+
+[source,http]
+----
+### GraphQL user query
+GRAPHQL {{host}}/graphql
+Authorization: Bearer {{token}}
+
+query GetUser($id: ID!) {
+  user(id: $id) {
+    id
+    name
+    email
+  }
+}
+
+{
+  "id": "123"
+}
+----
+
+This is the example from `examples/requests.http` in the project repository.
+The `{{host}}` and `{{token}}` tokens are interpolated from the active environment file or in-file `@var` declarations before the request is sent.
+See xref:environments.adoc[] for details on variable resolution.
+
+== How the body is rendered to JSON
+
+The renderer (`render_graphql_json_with_extras`) splits the body on the *last* blank-line-separated block that begins with `{` and parses as valid JSON.
+Everything before that block is the GraphQL operation text; the JSON block becomes the `variables` value.
+If no such block is present, `variables` is omitted from the payload entirely.
+
+The operation name is detected with a regular expression that matches the first occurrence of `query`, `mutation`, or `subscription` followed by an identifier at the start of a line.
+Anonymous operations (`query { ... }` or bare `{ ... }`) work correctly — `operationName` is simply omitted from the payload.
+
+The renderer always sets `Content-Type: application/json` and `Accept: application/json` on the outgoing request.
+Headers declared in the request block take precedence, so you can override either if your server requires a different value.
+
+[#variables]
+== Variable validation
+
+Variable validation is always-on and requires no schema.
+When the CLI parses a GRAPHQL body it extracts the variable definition list from the operation — for example `($id: ID!, $limit: Int = 10)` — and compares it against the JSON variables block.
+
+Three classes of problem are reported:
+
+Required variable missing::
+  A variable declared with a non-null type and no default is absent from the JSON object.
++
+----
+required variable $id (ID!) is missing from the variables block
+----
+
+Required variable provided as null::
+  A variable declared as non-null was explicitly supplied as JSON `null`.
++
+----
+required variable $id (ID!) was provided as null
+----
+
+Undeclared variable::
+  A key in the JSON object does not correspond to any `$variable` declared on the operation.
++
+----
+variable 'stray' is provided but not declared on the operation
+----
+
+Variables with a default value (`$limit: Int = 10`) are *not* required — omitting them from the JSON block is valid.
+Nullable variables (`$tag: String` without `!`) are likewise optional.
+
+Validation issues are printed with `<file>:<line>: [<name>] <message>` framing when running `zed-http check`.
+`zed-http run` enforces the same check before sending; pass `--no-validate` to skip it for ad-hoc debugging.
+
+[#introspection]
+== Schema introspection
+
+`zed-http introspect` sends the standard GraphQL introspection query (`IntrospectionQuery`) against the URL and headers of a selected GRAPHQL request, then caches the result.
+
+[source,bash]
+----
+zed-http introspect \
+  --file requests.http \
+  --name "GraphQL user query" \
+  --env dev
+----
+
+The command reuses env-file interpolation, so bearer tokens in your request headers resolve correctly before the introspection POST is sent.
+
+By default, the response's `.data` object is written to:
+
+----
+<base>/.zed-http/schema/<host-slug>.json
+----
+
+The slug is derived from the URL's host component, with `:` and `/` replaced by `-`.
+For example, a request targeting `https://countries.trevorblades.com/graphql` produces the slug `countries.trevorblades.com`, and the cache path becomes:
+
+----
+<base>/.zed-http/schema/countries.trevorblades.com.json
+----
+
+Multiple requests pointing at the same host share the one cached file.
+
+To save to a custom location rather than the default cache directory, use `--output`:
+
+[source,bash]
+----
+zed-http introspect \
+  --file requests.http \
+  --name "GraphQL user query" \
+  --output ./schemas/countries.json
+----
+
+.Full example against a public endpoint
+[source,bash]
+----
+# Assuming your requests.http contains a GRAPHQL block pointing at the
+# countries.trevorblades.com endpoint:
+zed-http introspect \
+  --file requests.http \
+  --name "Countries query"
+
+# Output:
+# Schema cached:
+# /path/to/project/.zed-http/schema/countries.trevorblades.com.json
+----
+
+[#schema-validation]
+== Schema-aware validation
+
+Once a schema is cached, `zed-http check` and `zed-http run` walk the top-level field selections of each GRAPHQL operation and flag any field that is not declared on the schema's root type for the operation kind (`query`, `mutation`, or `subscription`).
+
+Schema validation is purely additive — it runs on top of variable validation and does not replace it.
+
+.Passing case
+[source,http]
+----
+### Countries query
+GRAPHQL https://countries.trevorblades.com/graphql
+
+query {
+  countries {
+    name
+    capital
+  }
+}
+----
+
+If `countries` is declared on the schema's `Query` root type, `zed-http check` exits with:
+
+----
+requests.http: 1 request(s) validated, no issues
+----
+
+.Failing case
+[source,http]
+----
+### Countries query
+GRAPHQL https://countries.trevorblades.com/graphql
+
+query {
+  countries {
+    name
+  }
+  bogusField {
+    id
+  }
+}
+----
+
+----
+requests.http:2: [Countries query] field 'bogusField' is not declared on 'Query' (schema query root type)
+----
+
+[NOTE]
+====
+Inline fragments (`... on SomeType { ... }`) and named fragment spreads (`...SomeFragment`) are intentionally skipped at this fidelity.
+Validating them correctly requires resolving the fragment's type condition against the full schema type graph, which is not yet implemented.
+Only the *outermost* selection set (the root fields) is checked.
+====
+
+[#cache]
+== Inspecting the cache
+
+`zed-http schema list` lists every cached schema under `<base>/.zed-http/schema/` with file sizes:
+
+[source,bash]
+----
+zed-http schema list
+----
+
+----
+countries.trevorblades.com    48213 bytes
+api.example.com               12740 bytes
+----
+
+Pass `--worktree <path>` to specify the worktree root when running from outside the project directory.
+
+`zed-http schema show --host <host>` prints a human-readable summary of a cached schema:
+
+[source,bash]
+----
+zed-http schema show --host countries.trevorblades.com
+----
+
+----
+Schema for countries.trevorblades.com
+  Query root:        Query
+  Mutation root:     <none>
+  Subscription root: <none>
+  Types:             248
+  Query fields       6
+----
+
+[#fragments]
+== Fragment includes
+
+The `# @fragments <path>` directive concatenates the contents of a GraphQL fragment file onto the operation before it is sent.
+The path is relative to the `.http` file's directory.
+Multiple `# @fragments` directives on the same request accumulate; the files are appended in declaration order.
+Fragment file contents are env-variable-interpolated, so variables such as `{{apiVersion}}` resolve using the same environment as the parent request.
+
+Create a shared fragment file alongside your `.http` file:
+
+.fragments.graphql
+[source,graphql]
+----
+fragment UserFragment on User {
+  id
+  name
+  email
+}
+----
+
+Then reference it from the request block:
+
+[source,http]
+----
+### Get user with fragments
+# @fragments ./fragments.graphql
+GRAPHQL {{host}}/graphql
+Authorization: Bearer {{token}}
+
+query GetUser($id: ID!) {
+  user(id: $id) {
+    ...UserFragment
+  }
+}
+
+{
+  "id": "42"
+}
+----
+
+When `zed-http run` sends this request, the operation sent to the server is:
+
+[source,graphql]
+----
+query GetUser($id: ID!) {
+  user(id: $id) {
+    ...UserFragment
+  }
+}
+
+fragment UserFragment on User {
+  id
+  name
+  email
+}
+----
+
+[TIP]
+====
+Fragment files work well for shared type definitions used across several requests in the same file.
+If a request does not include a `# @fragments` directive, no fragment file is loaded and the operation is sent as written.
+====
+
+Cross-references: xref:assertions.adoc[] for asserting on GraphQL responses; xref:environments.adoc[] for variable interpolation in headers and fragment files.

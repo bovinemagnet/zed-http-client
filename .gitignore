@@ -22,3 +22,7 @@ examples/http-client.private.env.json
 
 # Tree-sitter generated artefacts; the published grammar repo carries these.
 grammars/tree-sitter-http-request/src/
+
+# Antora build output
+build/
+.cache/antora/

@@ -1,0 +1,576 @@
+= CLI Reference
+:description: Full reference for the zed-http command-line interface — all subcommands, flags, exit codes, and examples.
+
+The `zed-http` binary is the out-of-process CLI companion to the Zed extension.
+It is built from the `zed-http-cli` crate in `crates/zed-http-cli/`.
+All request execution, parsing, validation, formatting, introspection, and import work is handled by this binary; the Zed extension only provides language support and task wiring.
+
+The CLI can be used independently of Zed — for example in CI pipelines or shell scripts — by invoking `zed-http` directly.
+
+[source,bash]
+----
+zed-http --help
+zed-http <subcommand> --help
+----
+
+== Subcommands
+
+* xref:#run[run] — execute a single HTTP or GraphQL request
+* xref:#check[check] — validate every request in a file without sending
+* xref:#list[list] — print a numbered request listing
+* xref:#envs[envs] — list available environment names
+* xref:#format[format] — re-emit a file in canonical layout
+* xref:#introspect[introspect] — run a GraphQL introspection query and cache the schema
+* xref:#schema[schema] — inspect cached schemas
+* xref:#import[import] — translate a Postman v2.1 collection into a `.http` file
+
+---
+
+[[run]]
+== zed-http run
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http run --file <path>
+             [--line <n> | --name <name>]
+             [--column <n>]
+             [--env <name>]
+             [--worktree <path>]
+             [--output pretty|json|raw]
+             [--verbose]
+             [--no-validate]
+             [--no-cookies]
+             [--cookie-jar <path>]
+----
+
+=== Description
+
+Executes a single request selected from the given `.http` or `.rest` file.
+The request is selected by line number, by name, or — when neither is specified — the first request in the file.
+Unless `--no-validate` is passed, the selected request is validated (including schema-aware checks for GRAPHQL requests when a cached schema is available) before the HTTP connection is opened.
+After execution the response body is saved to `<base>/.zed-http/responses/` relative to the `.http` file.
+Assertion directives (`# @expect-*`) are evaluated against the live response and cause a non-zero exit on failure.
+See xref:assertions.adoc[Response assertions] and xref:cookies.adoc[Persistent cookies] for related features.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file to read.
+
+|`--line <n>`
+|integer, optional
+|Select the request whose block contains line `n` (1-based). Conflicts with `--name`.
+
+|`--name <name>`
+|string, optional
+|Select the request with this name (case-insensitive). Conflicts with `--line`.
+
+|`--column <n>`
+|integer, optional
+|Reserved for future use. Accepted but not currently used in request selection.
+
+|`--env <name>`
+|string, optional
+|Load the named environment from `http-client.env.json` (and `http-client.private.env.json`). Overrides any `# @env` directive in the file.
+
+|`--worktree <path>`
+|path, optional
+|Root path for environment file discovery and `.zed-http/` artifact directories. Defaults to the directory containing `--file`.
+
+|`--output <mode>`
+|`pretty` \| `json` \| `raw`, default `pretty`
+|Output format. `pretty` — human-readable status, duration, content-type, saved path, and preview. `json` — structured envelope (see xref:#json-output-envelope[JSON output envelope]). `raw` — response body verbatim.
+
+|`--verbose`
+|flag
+|Before sending, print the resolved method, URL, headers, variables (secrets masked), and body.
+
+|`--no-validate`
+|flag
+|Skip pre-flight validation. Use for ad-hoc debugging when a request is intentionally malformed.
+
+|`--no-cookies`
+|flag
+|Disable the persistent cookie jar for this invocation. Cookies are neither read nor written.
+
+|`--cookie-jar <path>`
+|path, optional
+|Override the cookie jar file location. Defaults to `<base>/.zed-http/cookies.json`.
+|===
+
+[[json-output-envelope]]
+The JSON envelope emitted by `--output json` has the following shape:
+
+[source,json]
+----
+{
+  "request": {
+    "name": "List users",
+    "method": "GET",
+    "url": "https://api.example.com/users",
+    "line": 4
+  },
+  "response": {
+    "status": "200 OK",
+    "duration_ms": 87,
+    "content_type": "application/json",
+    "saved_path": ".zed-http/responses/2026-05-20T14-32-10-list-users.json",
+    "redirect_path": null,
+    "body": { ... },
+    "assertion_failures": []
+  }
+}
+----
+
+`response.assertion_failures` is a non-empty array when any `# @expect-*` directive is violated.
+Each entry has `line` (source line in the `.http` file) and `message` fields.
+
+=== Exit codes
+
+Non-zero exit is produced when:
+
+* Pre-flight validation fails (unless `--no-validate`).
+* The HTTP request itself fails (network error, TLS error).
+* One or more `# @expect-*` assertions are not satisfied.
+
+=== Example
+
+[source,bash]
+----
+zed-http run --file api/users.http --line 12 --env dev --output json
+----
+
+---
+
+[[check]]
+== zed-http check
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http check --file <path>
+               [--env <name>]
+               [--worktree <path>]
+----
+
+=== Description
+
+Parses every request block in the file and reports validation issues without making any HTTP connections.
+Issues are printed to stderr in `<file>:<line>: [<request-name>] <message>` format.
+When a cached schema is available for a GRAPHQL request's URL (after a prior `introspect` run), schema-aware field validation is also applied.
+Exits non-zero if any issue is found.
+
+Use this command in CI to gate on well-formed request files before executing them.
+See xref:directives.adoc[Directives reference] for a description of what the validator checks.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file to validate.
+
+|`--env <name>`
+|string, optional
+|Environment to use when resolving `{{variable}}` references in URLs for schema lookup. Requests with unresolved variables skip schema validation rather than reporting false positives.
+
+|`--worktree <path>`
+|path, optional
+|Root path for environment file and schema cache discovery.
+|===
+
+=== Exit codes
+
+Exits `1` when at least one validation issue is found.
+Exits `0` and prints a summary when all requests pass.
+
+=== Example
+
+[source,bash]
+----
+zed-http check --file api/users.http --env dev --worktree .
+----
+
+---
+
+[[list]]
+== zed-http list
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http list --file <path>
+----
+
+=== Description
+
+Prints a numbered listing of every request block in the file.
+Each line shows the 1-based index, the request name (or `Unnamed request`), the HTTP method, and the starting line number.
+This command is used by Zed's task picker to populate the "select a request" UI.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file to list.
+|===
+
+=== Example
+
+[source,bash]
+----
+zed-http list --file api/users.http
+----
+
+Example output:
+
+----
+1. Health check        GET      line 4
+2. List users          GET      line 9
+3. Create user         POST     line 14
+----
+
+---
+
+[[envs]]
+== zed-http envs
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http envs --file <path>
+              [--worktree <path>]
+----
+
+=== Description
+
+Lists every environment name defined across `http-client.env.json` and `http-client.private.env.json`, printing one name per line.
+Duplicate names (present in both files) appear only once.
+The search walks up from the directory containing `--file` to `--worktree`, using the same discovery rules as `run`.
+See xref:environments.adoc[Environments and variables] for the full lookup algorithm.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file whose directory tree is searched for environment files.
+
+|`--worktree <path>`
+|path, optional
+|Upper bound for the directory walk. Defaults to the directory containing `--file`.
+|===
+
+=== Example
+
+[source,bash]
+----
+zed-http envs --file api/users.http --worktree .
+----
+
+---
+
+[[format]]
+== zed-http format
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http format --file <path>
+                [--in-place | --check]
+----
+
+=== Description
+
+Re-emits a request file in canonical layout: trimmed whitespace, a single space after the method keyword, `Header: value` on its own line, a blank line before the body, option directives before the request line, and response redirect after the body.
+Without any mode flag the formatted output is printed to stdout.
+
+WARNING: `zed-http format` discards non-directive comments (`# free text`) that appear inside request blocks.
+Commentary outside request blocks is also dropped.
+Directive comments (`# @timeout`, `# @expect-status`, etc.) are preserved.
+See xref:roadmap.adoc#known-limitations[Known limitations].
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file to format.
+
+|`--in-place`
+|flag
+|Overwrite the source file with the formatted output. Conflicts with `--check`.
+
+|`--check`
+|flag
+|Exit non-zero if the file is not already in canonical form, without writing anything. Useful in CI. Conflicts with `--in-place`.
+|===
+
+=== Exit codes
+
+With `--check`: exits `1` when the file is not in canonical form, `0` when it already is.
+
+=== Example
+
+[source,bash]
+----
+# Check in CI
+zed-http format --file api/users.http --check
+
+# Normalise in place
+zed-http format --file api/users.http --in-place
+----
+
+---
+
+[[introspect]]
+== zed-http introspect
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http introspect --file <path>
+                    [--line <n> | --name <name>]
+                    [--env <name>]
+                    [--worktree <path>]
+                    [--output <path>]
+----
+
+=== Description
+
+Sends a standard GraphQL introspection query against the URL resolved from the selected `GRAPHQL` request block.
+The `--env` / `--worktree` flags are honoured so that bearer tokens and host variables resolve correctly.
+The `data` portion of the introspection response is saved as a JSON schema file.
+By default the file is written to `<base>/.zed-http/schema/<host>.json` where `<host>` is derived from the request URL; use `--output` to choose a custom path.
+Once a schema is cached, xref:#check[check] and xref:#run[run] use it for schema-aware GRAPHQL field validation.
+See xref:graphql.adoc#introspection[Schema introspection] for a walkthrough.
+
+The selected request *must* use the `GRAPHQL` pseudo-method; `introspect` exits with an error if an HTTP method request is selected.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The `.http` or `.rest` file containing the GRAPHQL request.
+
+|`--line <n>`
+|integer, optional
+|Select by line number. Conflicts with `--name`.
+
+|`--name <name>`
+|string, optional
+|Select by request name. Conflicts with `--line`.
+
+|`--env <name>`
+|string, optional
+|Environment for variable resolution (e.g. bearer token, host URL).
+
+|`--worktree <path>`
+|path, optional
+|Root path for environment file and schema cache directory.
+
+|`--output <path>`
+|path, optional
+|Custom path for the cached schema file. Overrides the default `<base>/.zed-http/schema/<host>.json` location.
+|===
+
+=== Exit codes
+
+Non-zero when the selected request is not a GRAPHQL request, when the introspection HTTP request fails, or when the server returns GraphQL errors in the response body.
+
+=== Example
+
+[source,bash]
+----
+zed-http introspect --file api/graphql.http --name "GetUser schema" --env dev
+----
+
+---
+
+[[schema]]
+== zed-http schema
+
+The `schema` subcommand has two sub-subcommands: `list` and `show`.
+
+=== zed-http schema list
+
+==== Synopsis
+
+[source,bash]
+----
+zed-http schema list [--worktree <path>]
+----
+
+==== Description
+
+Lists all schema JSON files cached under `<base>/.zed-http/schema/` alongside their byte sizes.
+Prints a message and exits `0` if no schemas are cached yet.
+
+==== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--worktree <path>`
+|path, optional
+|Root path whose `.zed-http/schema/` directory is inspected.
+|===
+
+==== Example
+
+[source,bash]
+----
+zed-http schema list --worktree .
+----
+
+---
+
+=== zed-http schema show
+
+==== Synopsis
+
+[source,bash]
+----
+zed-http schema show --host <host>
+                     [--worktree <path>]
+----
+
+==== Description
+
+Loads the cached schema for `<host>` from `<base>/.zed-http/schema/<host>.json` and prints a human-readable summary: query root, mutation root, subscription root type names, total type count, and root field counts for query and mutation types.
+
+==== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--host <host>`
+|string, *required*
+|The hostname key identifying the cached schema (as printed by `schema list`).
+
+|`--worktree <path>`
+|path, optional
+|Root path whose `.zed-http/schema/` directory is read.
+|===
+
+==== Example
+
+[source,bash]
+----
+zed-http schema show --host api.example.com --worktree .
+----
+
+---
+
+[[import]]
+== zed-http import postman
+
+=== Synopsis
+
+[source,bash]
+----
+zed-http import postman --file <collection.json>
+                        [--out <path>]
+----
+
+=== Description
+
+Translates a Postman v2.1 collection export into a canonical `.http` file.
+Nested folders are flattened with a `parent / child` naming convention in the request names.
+`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and similar methods are mapped directly.
+`raw` JSON bodies become standard JSON request bodies.
+`graphql` body mode becomes a `GRAPHQL` pseudo-method request.
+Collection-level variables become `@var = value` in-file declarations.
+Multipart/form-data bodies are skipped (logged to stderr).
+
+Without `--out` the result is printed to stdout so you can preview it before writing.
+See xref:postman-import.adoc[Postman collection import] for a step-by-step guide.
+
+=== Flags
+
+[cols="2,1,4", options="header"]
+|===
+|Flag |Type / default |Description
+
+|`--file <path>`
+|path, *required*
+|The Postman v2.1 collection JSON file to import.
+
+|`--out <path>`
+|path, optional
+|Write the translated `.http` file to this path (parent directories are created). Defaults to stdout.
+|===
+
+=== Exit codes
+
+Non-zero when the collection file cannot be read or is not a valid Postman v2.1 JSON document.
+
+=== Example
+
+[source,bash]
+----
+zed-http import postman --file exports/my-api.postman_collection.json \
+                        --out api/my-api.http
+----
+
+---
+
+[[editor-task-variables]]
+== Editor task variables
+
+When `zed-http` is invoked from a Zed task, the following Zed task variables are available.
+The bundled `.zed/tasks.json` (and `tasks.json.example`) map these onto the corresponding CLI flags.
+
+[cols="1,2,2", options="header"]
+|===
+|Variable |CLI flag it maps to |Description
+
+|`$ZED_FILE`
+|`--file`
+|Absolute path to the file currently open in the active editor buffer.
+
+|`$ZED_ROW`
+|`--line`
+|1-based line number of the cursor position. Used by `run` to select the request block under the cursor.
+
+|`$ZED_COLUMN`
+|`--column`
+|1-based column of the cursor position. Passed through to `--column` (accepted but currently unused).
+
+|`$ZED_WORKTREE_ROOT`
+|`--worktree`
+|Root path of the Zed worktree containing the open file. Used for environment file discovery and `.zed-http/` artifact placement.
+|===
+
+See xref:zed-integration.adoc[Running from Zed] for how these variables are wired into Zed tasks.

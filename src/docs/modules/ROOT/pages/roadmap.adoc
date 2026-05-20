@@ -1,0 +1,124 @@
+= Roadmap and Limitations
+:description: Where zed-http-client stands against the original PRD roadmap — completed tiers, deferred features, and known limitations.
+
+The project follows the roadmap laid out in the initial PRD (section 11).
+Tiers v0.1 through v0.4 are now complete.
+The items from those tiers that were explicitly deferred — multipart bodies, JavaScript scripting, OAuth flows, and a custom Zed output pane — remain unscheduled; they are grouped under xref:#deferred[Deferred].
+
+== Completed tiers
+
+=== v0.1 — usable MVP
+
+_Shipped in release 0.0.3._
+
+* [x] `.http` and `.rest` file-type recognition and Tree-sitter syntax highlighting
+* [x] Request block detection and `http-client-request` runnable tag
+* [x] `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` methods
+* [x] `GRAPHQL` pseudo-method — executed as `POST` with a canonical `{query, variables, operationName}` payload
+* [x] `http-client.env.json` and `http-client.private.env.json` discovery and overlay
+* [x] In-file `@name = value` variable declarations and `{{interpolation}}`
+* [x] Pretty terminal output with status, duration, content-type, and file path
+* [x] Responses persisted to `<base>/.zed-http/responses/`
+
+=== v0.2 — daily-driver quality
+
+_Shipped in release 0.0.3._
+
+* [x] Request names (`### My request`) and run-by-name (`--name`)
+* [x] xref:cli-reference.adoc#list[`zed-http list`] — numbered request listing
+* [x] xref:cli-reference.adoc#envs[`zed-http envs`] — environment name listing
+* [x] `# @timeout <ms>` and `# @connection-timeout <ms>` per-request directives
+* [x] `# @no-redirect` — disable automatic redirect following
+* [x] Body from file via `< ./path`
+* [x] Response redirect via `>> ./path` (refuses to overwrite) and `>>! ./path` (force overwrite)
+* [x] Diagnostics annotated with file path and line number
+* [x] GraphQL `operationName` detection from the operation keyword
+
+=== v0.3 — GraphQL productivity
+
+_Shipped across releases 0.1.0, 0.2.0, and 0.3.0._
+
+* [x] xref:cli-reference.adoc#format[`zed-http format`] — canonical file layout, with `--in-place` and `--check` modes
+* [x] xref:cli-reference.adoc#introspect[`zed-http introspect`] — GraphQL introspection query with schema caching
+* [x] xref:cli-reference.adoc#schema[`zed-http schema list / show`] — cached schema inspection
+* [x] Schema-aware GRAPHQL field validation in xref:cli-reference.adoc#check[`check`] and xref:cli-reference.adoc#run[`run`]
+* [x] GraphQL variable validation (required variables, `null` required variables, undeclared extras)
+* [x] `# @fragments <path>` — fragment file inclusion with environment interpolation
+* [x] xref:cli-reference.adoc#check[`zed-http check`] pre-flight validation gate — `--env` and `--worktree` aware
+
+=== v0.4 — IntelliJ parity push, first slice
+
+_Shipped in releases 0.4.0 and 0.4.1._
+
+* [x] xref:cookies.adoc[Persistent cookie jar] (`<base>/.zed-http/cookies.json`) — both persistent and session-scoped cookies survive across invocations
+* [x] `--no-cookies` and `--cookie-jar <path>` flags on `run`
+* [x] xref:assertions.adoc[Response assertions] — `# @expect-status`, `# @expect-header`, `# @expect-json` directives
+* [x] Assertion failures reported with file:line, surfaced in JSON output as `response.assertion_failures`, and cause non-zero exit
+* [x] xref:postman-import.adoc[`zed-http import postman`] — Postman v2.1 collection translation
+* [x] `# @env <name>` file-level directive — selects the active environment without requiring `--env` on every invocation
+* [x] `zed-http check` and `zed-http format` honour `# @env`
+
+[[deferred]]
+== Deferred
+
+The items below were listed in the original PRD but have not yet been scheduled.
+
+=== Multipart / form-data request bodies
+
+* [ ] Multipart `Content-Type: multipart/form-data` request bodies.
+  The parser and executor do not yet handle this body type.
+  Postman import skips multipart items and logs a warning.
+  Tracking for a future v0.5.
+
+* [ ] Manual multipart syntax with `--BOUNDARY` markers (the JetBrains textual format for crafting multipart payloads by hand).
+  Also deferred; depends on the same executor work.
+
+=== JavaScript scripting
+
+* [ ] JS pre-request scripts (`< {% ... %}`).
+  Requires an embedded JavaScript runtime (e.g. `deno_core` or `rquickjs`).
+  This is a significant lift with no concrete plan yet.
+
+* [ ] JS response handlers for extracting values across request chains.
+  Same runtime dependency as pre-request scripts.
+
+=== Authentication flows
+
+* [ ] OAuth 2.0 flows (authorisation code, client credentials, device flow).
+  JetBrains' own HTTP Client CLI also documents OAuth as unsupported; the complexity is substantial.
+
+* [ ] Client certificate configuration.
+  JetBrains CLI currently documents SSL client certs as unsupported too.
+  The `reqwest`/`rustls` stack can support this but policy decisions and configuration syntax are needed first.
+
+=== Editor integration
+
+* [ ] A custom rich Zed output pane for viewing responses without switching to the terminal.
+  The integrated task terminal is the practical surface today.
+  A proper panel would require Zed to expose a broader UI extension API than is currently available.
+  See xref:zed-integration.adoc#output-expectations[Output expectations] for what the current terminal output looks like.
+
+=== GraphQL
+
+* [ ] Inline-fragment and named-fragment GraphQL validation.
+  The current schema validator skips fragment spreads (`...FragmentName`) and inline fragments (`... on TypeName`) because resolving the type condition requires more grammar support.
+  Top-level field selections on query, mutation, and subscription roots are fully validated.
+
+[[known-limitations]]
+== Known limitations
+
+These are practical caveats in the current release rather than planned future work.
+
+`format` discards free-text comments::
+`zed-http format` preserves only directive comments (`# @timeout`, `# @expect-status`, `# @env`, etc.).
+Free-text comments (`# This is a note`) inside request blocks, and all commentary outside request blocks, are silently dropped when the file is reformatted.
+Round-tripping is otherwise structurally lossless.
+See xref:cli-reference.adoc#format[format].
+
+`--column` is accepted but unused::
+The `--column` flag on xref:cli-reference.adoc#run[`run`] is wired through from the Zed task variable `$ZED_COLUMN` but the current request selector only uses line numbers.
+It is accepted for forward compatibility.
+
+Shared `.zed-http/` directory::
+Responses (`responses/`), cached schemas (`schema/`), and the cookie jar (`cookies.json`) all live under `<base>/.zed-http/`.
+If you need to clear one category, delete only the relevant subdirectory rather than the whole `.zed-http/` tree.

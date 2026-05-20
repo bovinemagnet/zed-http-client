@@ -1,0 +1,291 @@
+= Request File Syntax
+:description: Reference for the .http and .rest file format recognised by the zed-http-client extension.
+
+This extension implements a practical subset of the IntelliJ HTTP Client file format.
+It is not affiliated with or endorsed by JetBrains.
+Request files use the `.http` or `.rest` extension and are plain text, making them suitable for version control alongside the codebase they exercise.
+
+For the directives embedded in these files see xref:directives.adoc[].
+For environment file discovery and variable layering see xref:environments.adoc[].
+
+== Anatomy of a request file
+
+The following annotated example shows every major feature in one place.
+
+[source,asciidoc]
+----
+# @env dev                            <1>
+
+@localToken = local-token-from-file   <2>
+
+### Health check                      <3>
+GET {{host}}/actuator/health          <4>
+Accept: application/json              <5>
+                                      <6>
+### Create user                       <3>
+# @timeout 5000                       <7>
+# @expect-status 201                  <8>
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+< ./create-user.json                  <9>
+
+>>! ./.zed-http/last-create-user.json <10>
+----
+
+<1> File-preamble directive: selects `dev` as the default environment.
+<2> In-file variable: `{{localToken}}` resolves to `local-token-from-file`.
+<3> `###` separator — starts a new request block. Text after `###` is the optional name.
+<4> Request line: `METHOD URL`. `{{host}}` is substituted from the active environment or in-file variables.
+<5> Header line: `Name: value`. Any number of headers may follow the request line.
+<6> A blank line marks the end of the header section. Anything after it is the body.
+<7> Section-preamble directive: overrides the request timeout.
+<8> Section-preamble directive: asserts the response status.
+<9> Body sourced from a file: `<` followed by a relative path.
+<10> Response redirect: `>>!` writes the response body to the given path, overwriting if it already exists.
+
+== Request blocks
+
+Each request block is delimited by a `###` separator line.
+The text that follows `###` on the same line becomes the optional *name* of the request.
+
+[source,asciidoc]
+----
+### List users
+GET https://api.example.com/users
+----
+
+A file that contains no `###` separators is treated as a single anonymous request block together with its preamble.
+
+=== Separator and name
+
+`###` must appear at the start of a line (leading whitespace is allowed).
+Anything on the same line after the hashes is trimmed and used as the request name.
+An unnamed separator (`###` alone) is valid.
+
+Names are case-insensitive for selection purposes — `zed-http run --name "list users"` and `--name "List Users"` both match the same block.
+
+=== Request line
+
+The first non-blank, non-comment, non-directive line after the separator is the *request line*:
+
+----
+METHOD URL
+----
+
+The method and the URL must be separated by at least one space.
+Recognised methods are:
+
+[cols="1,3",options="header"]
+|===
+| Method | Notes
+
+| `GET`
+| Standard HTTP GET.
+
+| `POST`
+| Standard HTTP POST.
+
+| `PUT`
+| Standard HTTP PUT.
+
+| `PATCH`
+| Standard HTTP PATCH.
+
+| `DELETE`
+| Standard HTTP DELETE.
+
+| `HEAD`
+| Standard HTTP HEAD.
+
+| `OPTIONS`
+| Standard HTTP OPTIONS.
+
+| `GRAPHQL`
+| Sent as HTTP `POST` with a canonical `{query, variables, operationName}` JSON payload.
+See xref:graphql.adoc[] for details.
+|===
+
+=== Headers
+
+Header lines immediately follow the request line with no blank line between them:
+
+[source,asciidoc]
+----
+GET https://api.example.com/users
+Authorization: Bearer {{token}}
+Accept: application/json
+----
+
+Each header is a `Name: value` pair.
+Comments (`#` or `//`) within the header section are skipped.
+A blank line terminates the header section.
+
+=== Line ranges and cursor-based selection
+
+The parser records a 1-based `start_line` and `end_line` for every request block.
+The Zed extension passes the cursor position to `zed-http run --line <n>`, which selects the block whose range contains that line number.
+This is how *Run request* in Zed knows which block to execute.
+
+== Bodies
+
+=== Inline body
+
+Any non-blank content after the blank line that follows the headers is treated as an inline body.
+
+[source,asciidoc]
+----
+POST https://api.example.com/users
+Content-Type: application/json
+
+{
+  "name": "Alice",
+  "email": "alice@example.com"
+}
+----
+
+The body may be any text — JSON, XML, plain text.
+`{{var}}` references are interpolated before the body is sent.
+
+=== Body from file
+
+A body section containing a single non-blank line that starts with `<` causes the content to be read from a file:
+
+[source,asciidoc]
+----
+POST https://api.example.com/users
+Content-Type: application/json
+
+< ./create-user.json
+----
+
+The path after `<` is resolved relative to the directory that contains the `.http` file.
+The file's contents are then `{{var}}`-interpolated before being sent, so template files can contain variable references.
+
+If the body section contains more than one non-blank line the `<` syntax is not recognised and the entire section is treated as an inline body.
+
+== Response redirects
+
+A response redirect saves the response body to a file on disk.
+It appears after the body (or after the headers when there is no body):
+
+[source,asciidoc]
+----
+>> ./out/response.json
+----
+
+[source,asciidoc]
+----
+>>! ./out/response.json
+----
+
+[cols="1,3",options="header"]
+|===
+| Syntax | Behaviour
+
+| `>> <path>`
+| Writes the response body to `<path>`. *Refuses to overwrite* an existing file — the redirect is skipped and a warning is printed.
+
+| `>>! <path>`
+| Writes the response body to `<path>`, *force-overwriting* any existing file.
+|===
+
+The path is resolved relative to the `.http` file's directory and is `{{var}}`-interpolated.
+
+NOTE: Response redirects are independent of the automatic save that the runner always performs under `<base>/.zed-http/responses/<timestamp>-<slug>.<ext>` alongside the request file.
+Both destinations are written on a successful response.
+
+== Variables and interpolation
+
+=== Declaring in-file variables
+
+Variables declared in the file preamble (before the first `###`) with `@name = value` syntax are available in all request blocks:
+
+[source,asciidoc]
+----
+@host = http://localhost:8080
+@apiVersion = v2
+----
+
+These are called *in-file variables* or *in-place variables*.
+They are always available regardless of which environment is active.
+
+=== Using variables
+
+`{{varName}}` substitutes the value of `varName` wherever it appears:
+
+* URL — `GET {{host}}/api/users`
+* Header values — `Authorization: Bearer {{token}}`
+* Inline body text — `{"env": "{{env}}"}`
+* Body-from-file path — `< ./{{version}}-body.json`
+* Response-redirect path — `>> ./{{run}}-response.json`
+* `@fragments` path — `# @fragments ./{{version}}-fragment.graphql`
+
+Variable names must begin with a letter or underscore and may contain letters, digits, underscores, hyphens, and dots.
+
+=== Multi-pass resolution
+
+Variable values may reference other variables:
+
+[source,asciidoc]
+----
+@host = http://localhost:8080
+@baseUrl = {{host}}/api
+----
+
+The resolver runs multiple passes over the variable map until all resolvable references are expanded.
+Long chains (`a → b → c → d`) are fully resolved provided there are no cycles.
+
+=== Missing references
+
+The behaviour differs depending on where a missing reference appears:
+
+[cols="2,3",options="header"]
+|===
+| Location | Behaviour when variable is missing
+
+| Inside a variable definition (`@foo = {{bar}}`)
+| The literal text `{{bar}}` is kept. No error. The unresolved reference may cascade into a hard failure later if it appears in the URL, headers, or body.
+
+| URL, header value, body text, redirect path, fragments path
+| Hard error — execution stops with a `MissingVariable` diagnostic. Sending the literal `{{token}}` to the server is almost never the intended behaviour.
+|===
+
+=== Variable precedence
+
+Variables are layered from lowest to highest priority:
+
+. Public environment file (`http-client.env.json`), selected environment.
+. Private environment file (`http-client.private.env.json`), selected environment.
+. In-file `@variables`.
+
+In-file variables always win.
+See xref:environments.adoc[] for the full layering model.
+
+== Comments
+
+Lines whose first non-whitespace characters are `#` or `//` are comments and are ignored during parsing:
+
+[source,asciidoc]
+----
+# This is a comment
+// This is also a comment
+GET https://example.com
+----
+
+`###` starts a request-block separator; it is *not* treated as a comment.
+
+A `#` followed immediately by `@` is a *directive* — see xref:directives.adoc[] for the full list.
+
+== What is not yet supported
+
+The following IntelliJ HTTP Client features are not implemented in this version ({project-version}):
+
+* Multipart/form-data bodies (`Content-Type: multipart/form-data`).
+* JavaScript pre-request and post-request scripts (`< {% ... %}`).
+* OAuth and OpenID Connect flows.
+* Client certificate configuration.
+* `@dynamic-variable` built-ins (e.g. `{{$uuid}}`, `{{$timestamp}}`).
+
+See xref:roadmap.adoc[] for the planned timeline and current workarounds.

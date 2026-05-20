@@ -1,0 +1,25 @@
+site:
+  title: HTTP Client for Zed
+  url: https://bovinemagnet.github.io/zed-http-client
+  start_page: zed-http-client::index.adoc
+
+content:
+  sources:
+    - url: .
+      start_path: src/docs
+      branches: HEAD
+
+ui:
+  bundle:
+    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
+    snapshot: true
+
+output:
+  dir: ./build/site
+  clean: true
+
+asciidoc:
+  attributes:
+    page-pagination: ''
+    page-toclevels: 2
+    source-language: 'asciidoc@'

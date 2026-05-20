@@ -1,0 +1,183 @@
+= Postman Collection Import
+:description: Translating a Postman v2.1 collection into a canonical .http file with zed-http import postman.
+
+`zed-http import postman` translates a Postman v2.1 collection into a canonical `.http` file.
+The importer walks the full item tree, flattens nested folders into request names, and maps collection variables to in-file `@var` declarations.
+
+[source,bash]
+----
+zed-http import postman --file <collection.json> [--out <path>]
+----
+
+When `--out` is omitted the result is written to stdout, making it easy to preview or pipe into another tool.
+When `--out` is supplied the file is written to the given path and a confirmation line is printed to stderr.
+
+== What is supported
+
+HTTP methods::
+  `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, and `OPTIONS` are all translated verbatim.
+
+URLs::
+  Both the `raw` string form and the structured `{"host": [...], "path": [...]}` form are accepted.
+  Postman's `{{variable}}` syntax passes through unchanged — it already matches the interpolation format used by `zed-http`.
+
+Headers::
+  All enabled headers are imported.
+  Headers marked `"disabled": true` in the collection JSON are silently skipped.
+
+Body modes::
+  `raw` — the raw body text is included inline.
+  `graphql` — the Postman `graphql` body object (with `query` and `variables` keys) is translated into a `GRAPHQL` request with the operation and the variables JSON block in the canonical layout.
+
+Collection variables::
+  Variables declared in the collection's top-level `variable` array become `@name = value` declarations at the top of the output file, so they resolve during `zed-http run` without needing an environment file.
+
+Nested folders::
+  Folders inside folders are flattened into request names joined with ` / `.
+  A request named `Create` inside a folder named `Users` inside a folder named `Auth` becomes `Auth / Users / Create`.
+
+== What is not supported
+
+Multipart `formdata` and `urlencoded` body modes::
+  These body modes are skipped during import.
+  The request is still included in the output but without a body.
+  Support is deferred to a future release.
+
+Pre-request and test scripts::
+  Postman runs these in a Node.js sandbox; `zed-http` has no equivalent runtime.
+  Script blocks are silently ignored during import.
+
+Collection-level auth helpers::
+  Postman supports applying an auth scheme (Bearer, Basic, API key, and so on) at the collection or folder level.
+  The importer does not translate collection-level auth — only `Authorization` and similar headers attached directly to an individual request pass through.
+
+== Round-trip example
+
+Given the following Postman v2.1 collection saved as `my-api.postman_collection.json`:
+
+[source,json]
+----
+{
+  "info": {
+    "name": "My API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "host", "value": "https://api.example.com" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": { "raw": "{{host}}/health" }
+      }
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{host}}/api/users" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\": \"Alice\"}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+----
+
+Run the import:
+
+[source,bash]
+----
+zed-http import postman \
+  --file my-api.postman_collection.json \
+  --out imported.http
+----
+
+Stderr confirmation:
+
+----
+Imported 2 request(s) from my-api.postman_collection.json → imported.http
+----
+
+The resulting `imported.http`:
+
+[source,http]
+----
+@host = https://api.example.com
+
+### Health
+GET {{host}}/health
+Accept: application/json
+
+### Users / Create
+POST {{host}}/api/users
+Content-Type: application/json
+
+{"name": "Alice"}
+----
+
+Verify the import by listing the requests:
+
+[source,bash]
+----
+zed-http list --file imported.http
+----
+
+----
+1. Health                GET      line 3
+2. Users / Create        POST     line 7
+----
+
+== GraphQL body example
+
+A Postman request with `"mode": "graphql"` is translated to a `GRAPHQL` block with the operation and variables in the canonical layout recognised by the variable validator and schema-aware validation.
+
+.Postman item
+[source,json]
+----
+{
+  "name": "GetUser",
+  "request": {
+    "method": "POST",
+    "header": [],
+    "url": { "raw": "{{host}}/graphql" },
+    "body": {
+      "mode": "graphql",
+      "graphql": {
+        "query": "query GetUser($id: ID!) { user(id: $id) { id name } }",
+        "variables": "{\"id\": \"42\"}"
+      }
+    }
+  }
+}
+----
+
+.Resulting `.http` block
+[source,http]
+----
+### GetUser
+GRAPHQL {{host}}/graphql
+
+query GetUser($id: ID!) { user(id: $id) { id name } }
+
+{"id": "42"}
+----
+
+Once imported, all xref:graphql.adoc[GraphQL] features apply: variable validation, schema introspection, schema-aware field validation, and fragment includes.
+
+Cross-reference: xref:http-file-syntax.adoc[] for the full `.http` file format that the importer produces.

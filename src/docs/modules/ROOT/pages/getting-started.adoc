@@ -1,0 +1,194 @@
+= Getting started
+:description: A step-by-step walkthrough from first request to environment-aware runs inside Zed.
+
+This guide walks you through sending your first request, adding environment files, and triggering the same pipeline from inside the Zed editor.
+It assumes you have already completed xref:installation.adoc[].
+
+== Step 1 — Create your first request file
+
+Create a file called `requests.http` in any directory:
+
+[source,http]
+----
+### Health check
+# @expect-status 200
+GET https://httpbin.org/status/200
+----
+
+The `# @expect-status 200` directive tells the CLI to fail with a non-zero exit code if the response status is anything other than `200`.
+See xref:assertions.adoc[] for the full set of assertion directives.
+
+== Step 2 — Run the request
+
+[source,bash]
+----
+zed-http run --file requests.http
+----
+
+If you have not installed the binary globally, use `cargo run` from the repository root instead:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- run --file requests.http
+----
+
+The CLI prints a summary to the terminal and saves the full response body under `.zed-http/responses/`:
+
+[source,text]
+----
+HTTP/1.1 200 OK
+Duration : 143ms
+Content-Type: text/html; charset=utf-8
+Saved    : .zed-http/responses/20260520-143201-health-check.txt
+
+(empty body)
+
+Assertions: all passed
+----
+
+[TIP]
+====
+Pass `--output json` to get machine-readable output suitable for CI pipelines.
+Pass `--verbose` to print the fully resolved request (with secret-looking header values masked) before execution.
+====
+
+== Step 3 — Add an environment file
+
+Hard-coding URLs in request files makes them fragile.
+Environment files let you keep a single request file and switch targets with a flag.
+
+Create `http-client.env.json` in the same directory as `requests.http`:
+
+[source,json]
+----
+{
+  "dev": {
+    "host": "https://httpbin.org"
+  },
+  "prod": {
+    "host": "https://httpbin.org"
+  }
+}
+----
+
+Now update `requests.http` to use the `{{host}}` variable and add a file-level `# @env` directive so the `dev` environment is the default:
+
+[source,http]
+----
+# @env dev
+
+### Health check
+# @expect-status 200
+GET {{host}}/status/200
+----
+
+Run without any flag — the `# @env dev` directive selects the `dev` environment automatically:
+
+[source,bash]
+----
+zed-http run --file requests.http
+----
+
+Override the environment from the command line; the `--env` flag takes precedence over the directive:
+
+[source,bash]
+----
+zed-http run --file requests.http --env prod
+----
+
+The resolution order is: `--env` flag wins, then `# @env` directive, then no environment (only in-file `@vars` are resolved).
+
+[NOTE]
+====
+Sensitive-looking keys (`token`, `secret`, `password`, `apikey`, `api_key`, `authorization`) are masked in `--verbose` output.
+Store actual secrets in `http-client.private.env.json`, which overlays the public file and should be added to `.gitignore`.
+====
+
+== Step 4 — List available environments
+
+To confirm which environments the CLI can see from the current working directory:
+
+[source,bash]
+----
+zed-http envs --file requests.http
+----
+
+Output:
+
+[source,text]
+----
+dev
+prod
+----
+
+The command walks up from the request file's directory towards the worktree root, merging every `http-client.env.json` and `http-client.private.env.json` it finds.
+
+== Step 5 — Validate without sending
+
+Before committing a request file to version control, check that every request is structurally valid:
+
+[source,bash]
+----
+zed-http check --file requests.http
+----
+
+Validation covers:
+
+* Non-empty request URLs
+* GraphQL bodies parse into `{query, variables, operationName}`
+* GraphQL variable definitions match the JSON variables block (missing, null, or extra variables are all flagged)
+* Top-level field selections exist on a cached schema, if one is available under `.zed-http/schema/`
+
+`check` exits non-zero on any issue, making it suitable as a CI step.
+Include the environment name when checking files that use `{{host}}`-style URLs so the schema lookup can resolve to the correct cached schema:
+
+[source,bash]
+----
+zed-http check --file requests.http --env dev
+----
+
+== Step 6 — Run from inside Zed
+
+The extension registers a `http-client-request` runnable tag on every `###` request block.
+When the tasks file is configured, placing the cursor inside a request block and running *task: spawn* (or the equivalent keybinding) fires the same `zed-http run` pipeline in a Zed terminal pane.
+
+Copy `tasks.json.example` from the repository root to `.zed/tasks.json` in your project:
+
+[source,bash]
+----
+cp tasks.json.example .zed/tasks.json
+----
+
+The default task uses `cargo run -p zed-http-cli` so it works without a global install:
+
+[source,json]
+----
+{
+  "label": "HTTP Client: run request under cursor",
+  "command": "cargo",
+  "args": [
+    "run", "-p", "zed-http-cli", "--",
+    "run",
+    "--file",    "$ZED_FILE",
+    "--line",    "$ZED_ROW",
+    "--column",  "$ZED_COLUMN",
+    "--worktree","$ZED_WORKTREE_ROOT"
+  ],
+  "tags": ["http-client-request"]
+}
+----
+
+Zed automatically passes `$ZED_FILE`, `$ZED_ROW`, and `$ZED_COLUMN` so the CLI selects the request the cursor is inside.
+
+If you have installed `zed-http` globally, replace `"command": "cargo"` and the `run -p zed-http-cli --` args with `"command": "zed-http"` directly — see the `README` for the installed-binary variant.
+
+[TIP]
+====
+The `.zed/tasks.json` in the repository root ships four pre-wired tasks covering no-env, `dev`, `test`, and `prod` environments, plus `list requests`, `list environments`, and `validate file`.
+These give you a full workflow without writing any task JSON yourself.
+====
+
+== Next steps
+
+* xref:directives.adoc[Directives reference] — full list of `# @` options: timeouts, no-redirect, response redirects, assertions, fragments
+* xref:graphql.adoc[GraphQL requests] — introspection, schema-aware validation, and fragment includes

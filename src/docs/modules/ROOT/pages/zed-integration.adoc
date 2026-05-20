@@ -1,0 +1,246 @@
+= Running from Zed
+:description: How the zed-http-client extension integrates with the Zed editor — language support, runnable detection, task wiring, and output expectations.
+
+The `zed-http-client` extension is two things at once: a *language extension* that gives `.http` and `.rest` files syntax highlighting and runnable detection inside Zed, and an *out-of-process CLI* (`zed-http`) that Zed invokes via its task system to actually execute requests.
+There is no custom Zed output panel today.
+All output lands in Zed's integrated terminal panel, and the full response body is also persisted under `<base>/.zed-http/responses/` so you can open it as an ordinary file in the editor.
+
+== What the extension provides
+
+=== File-type recognition
+
+Zed recognises files with the `.http` or `.rest` extension as the `HTTP Request` language, as declared in `languages/http-request/config.toml`.
+All editor features below apply automatically once you open a file with either suffix.
+
+NOTE: `.rest` is claimed exclusively by this extension.
+`.http` is shared with at least one other community extension.
+See xref:#suffix-conflicts[Suffix conflicts] below.
+
+=== Syntax highlighting
+
+The Tree-sitter grammar provides token-level highlighting across the full request file.
+
+[cols="1,2", options="header"]
+|===
+|Token type |Highlight scope
+
+|`### Request name` separator
+|`punctuation.special` (separator line) + `title` (the name text)
+
+|HTTP method (`GET`, `POST`, etc.) and the `GRAPHQL` keyword
+|`keyword`
+
+|Request URL
+|`string.special.url`
+
+|`# Comment` lines
+|`comment`
+
+|`@variable = value` declaration name
+|`variable`
+
+|`@variable = value` declaration value
+|`string`
+
+|`{{interpolation}}` references
+|`variable.special`
+
+|Header name
+|`property`
+
+|Header value
+|`string`
+|===
+
+=== Runnable detection
+
+Every `request_line` node — the method-and-URL line at the start of each request block — is captured with the `http-client-request` tag via `languages/http-request/runnables.scm`.
+Zed's task system uses this tag to match which tasks are available when the cursor is inside a request block.
+
+=== Snippets
+
+The extension bundles a snippets file for common request shapes.
+Type the prefix in any `.http` or `.rest` file and accept the completion.
+
+[cols="1,2", options="header"]
+|===
+|Prefix |Expands to
+
+|`get`
+|`GET` request with URL placeholder
+
+|`post`
+|`POST` request with `Content-Type: application/json` and JSON body stub
+
+|`put`
+|`PUT` request with JSON body stub
+
+|`patch`
+|`PATCH` request with JSON body stub
+
+|`delete`
+|`DELETE` request
+
+|`graphql`
+|`GRAPHQL` request with query and variables blocks
+
+|`@var`
+|`@name = value` variable declaration
+
+|`options`
+|Request block with common `# @timeout`, `# @no-redirect` directives pre-filled
+|===
+
+== Installing as a dev extension
+
+The extension is not yet published to the Zed extension registry.
+Install it directly from the source repository.
+
+. Clone {project-repo}.
+. In Zed, open the command palette and run `zed: install dev extension`.
+. Point the file picker at the cloned directory.
+. Zed compiles the Tree-sitter grammar automatically, cloning from the grammar repo at the SHA pinned in `extension.toml`.
+
+TIP: After the initial compile, Zed caches the WASM grammar.
+If you bump the `rev` in `extension.toml`, restart Zed to trigger a fresh compile.
+
+== Triggering a request from the editor
+
+Zed's task system drives request execution.
+The bundled `.zed/tasks.json` in the repository ships task entries that invoke the `zed-http` CLI.
+Copy these to your own project's `.zed/tasks.json` (see xref:#available-tasks[Available tasks]).
+
+To run a request:
+
+. Place the cursor anywhere inside a request block — from the `###` separator line down through the body.
+. Open the command palette and run `task: spawn`.
+. Zed shows the tasks whose `tags` array includes `http-client-request`, filtered by the cursor position.
+. Choose one of the per-environment variants (see xref:#available-tasks[Available tasks] below).
+. The task runs in Zed's integrated terminal panel.
+
+To repeat the last run without returning to the picker, use `task: rerun` (default keybinding kbd:[Alt+T]).
+This is the most efficient workflow when iterating on a single request.
+
+NOTE: `task: spawn` with `http-client-request` tasks only appears when the cursor is inside a recognised request block.
+If the picker shows no HTTP tasks, check that the cursor is below a `###` line in an `.http` or `.rest` file.
+
+[[available-tasks]]
+== Available tasks
+
+The following tasks are defined in the bundled `.zed/tasks.json`.
+Copy the file to your project's `.zed/` directory and adjust the `command` from `cargo run -p zed-http-cli --` to `zed-http` once you have the CLI installed on `$PATH`.
+
+[cols="2,1,3", options="header"]
+|===
+|Label |Needs cursor in request? |What it does
+
+|`HTTP Client: run request (no env)`
+|Yes
+|Runs the request under the cursor with no environment overlay.
+
+|`HTTP Client: run request (env: dev)`
+|Yes
+|Runs the request under the cursor with `--env dev`.
+
+|`HTTP Client: run request (env: test)`
+|Yes
+|Runs the request under the cursor with `--env test`.
+
+|`HTTP Client: run request (env: prod)`
+|Yes
+|Runs the request under the cursor with `--env prod`.
+
+|`HTTP Client: list requests in file`
+|No
+|Prints a numbered listing of every request in the current file.
+
+|`HTTP Client: list available environments`
+|No
+|Prints the environment names discovered from `http-client.env.json` alongside the current file.
+
+|`HTTP Client: validate file`
+|No
+|Parses every request in the file and reports any validation issues without sending.
+|===
+
+The three tasks that do not require a cursor position (`list`, `envs`, `check`) are available via `task: spawn` from anywhere in the file.
+
+== Adding a new environment to the task list
+
+. Declare the environment in `http-client.env.json` (and optionally `http-client.private.env.json`).
+  See xref:environments.adoc[Environments and variables] for the file format.
+. Open `.zed/tasks.json` in your project.
+. Copy one of the existing per-env run-request entries.
+. Change the `--env` argument value and the `"label"` string to match the new environment name.
+
+Example — adding a `staging` environment:
+
+[source,json]
+----
+{
+  "label": "HTTP Client: run request (env: staging)",
+  "command": "zed-http",
+  "args": [
+    "run",
+    "--file", "$ZED_FILE",
+    "--line", "$ZED_ROW",
+    "--column", "$ZED_COLUMN",
+    "--worktree", "$ZED_WORKTREE_ROOT",
+    "--env", "staging"
+  ],
+  "reveal": "always",
+  "hide": "never",
+  "use_new_terminal": false,
+  "allow_concurrent_runs": true,
+  "save": "current",
+  "tags": ["http-client-request"]
+}
+----
+
+== Output expectations
+
+The CLI supports three output modes controlled by `--output` (default `pretty`).
+
+`pretty` (default)::
+Prints status code and reason, elapsed duration in milliseconds, the `Content-Type` header, the path to the saved response file, and a preview of the response body.
+Assertion failures (from xref:assertions.adoc[`# @expect-*` directives]) are printed to stderr after the preview.
+
+`json`::
+Prints a structured JSON envelope that includes `request.name`, `request.method`, `request.url`, `response.status`, `response.duration_ms`, `response.content_type`, `response.saved_path`, `response.redirect_path`, `response.body`, and `response.assertion_failures`.
+This mode is suitable for scripting and CI pipelines.
+
+`raw`::
+Prints the response body verbatim — no envelope, no metadata.
+Useful for piping to `jq` or another post-processor.
+
+In all modes, the full response body is also saved to `<base>/.zed-http/responses/<timestamp>-<slug>.<ext>` relative to the `.http` file.
+Zed's terminal detects the file path and makes it clickable, so you can open the response in the editor directly from the terminal output.
+
+[[suffix-conflicts]]
+== Suffix conflicts
+
+Zed assigns file extensions to languages on a first-match basis.
+If another extension (such as `tie304/zed-http`) also claims `.http`, only one of them will be active for `.http` files.
+
+To resolve conflicts:
+
+* Uninstall the conflicting extension, *or*
+* Use `.rest` files for your requests — `.rest` is claimed only by this extension.
+
+If you must keep both extensions installed, check Zed's extension settings (`zed: extensions`) to see which extension is listed first.
+
+== Editing the grammar locally
+
+The Tree-sitter grammar lives in a separate repository at {grammar-repo}.
+This repository keeps a local mirror at `grammars/tree-sitter-http-request/` for convenient editing, but Zed always clones from the published repository at the SHA pinned in `extension.toml`.
+
+To propose a grammar change:
+
+. Edit `grammar.js` in your local `grammars/tree-sitter-http-request/` copy.
+. Run `npx tree-sitter generate` to regenerate `src/parser.c`.
+. Push the change to the grammar repository.
+. Copy the resulting commit SHA into the `rev` field under `[grammars.http_request]` in `extension.toml`.
+. Reinstall the dev extension in Zed to pick up the new grammar.
+
+For more detail on what the CLI accepts in the request files, see xref:http-file-syntax.adoc[Request file syntax], xref:directives.adoc[Directives reference], and xref:environments.adoc[Environments and variables].
+For the full list of CLI flags used by the tasks, see xref:cli-reference.adoc[CLI reference].

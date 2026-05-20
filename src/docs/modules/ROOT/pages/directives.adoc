@@ -1,0 +1,349 @@
+= Directives Reference
+:description: Complete reference for every # @directive recognised by the zed-http-client parser.
+
+Directives are special comment lines that begin with `# @` or `// @`.
+They carry structured metadata that the parser and executor act on.
+
+The parser recognises two scopes: *file-preamble directives* appear before the first `###` separator and affect the whole file; *section-preamble directives* appear between a `###` separator and the request line and affect only that one request.
+
+Unknown directive names are silently ignored, matching IntelliJ's forward-compatibility behaviour.
+A future version of the extension may introduce new directives that older versions of `zed-http` will simply skip.
+
+For the environment file model that `# @env` interacts with see xref:environments.adoc[].
+For `# @expect-*` assertion semantics see xref:assertions.adoc[].
+For the request file format that these directives live inside see xref:http-file-syntax.adoc[].
+
+== Quick reference
+
+[cols="2,1,4",options="header"]
+|===
+| Directive | Scope | Purpose
+
+| `# @env <name>`
+| File preamble
+| Selects the default environment from the env files.
+
+| `# @timeout <ms>`
+| Section preamble
+| Sets the total per-request timeout in milliseconds.
+
+| `# @connection-timeout <ms>`
+| Section preamble
+| Sets the TCP connection timeout in milliseconds.
+
+| `# @no-redirect`
+| Section preamble
+| Disables automatic HTTP redirect following for this request.
+
+| `# @fragments <path>`
+| Section preamble
+| Appends a GraphQL fragment file to the operation. Repeatable.
+
+| `# @expect-status <codes>`
+| Section preamble
+| Asserts the response HTTP status code.
+
+| `# @expect-header <name> <substring>`
+| Section preamble
+| Asserts a response header contains a substring.
+
+| `# @expect-json <pointer> <expected>`
+| Section preamble
+| Asserts a JSON value at a JSON Pointer path.
+|===
+
+== File-preamble directives
+
+File-preamble directives appear before the first `###` separator in the file.
+
+=== `# @env`
+
+Selects the default environment to load from `http-client.env.json` and `http-client.private.env.json`.
+
+[source,asciidoc]
+----
+# @env dev
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @env <name>`
+
+| Where
+| File preamble (before the first `###`)
+
+| Repeatable
+| No — a second `# @env` is an error
+
+| CLI override
+| `--env <name>` takes precedence over this directive
+|===
+
+*Validation errors:*
+
+* `@env requires an environment name` — the directive appears with no value.
+* `@env is declared more than once (second value: '<name>')` — the directive appears more than once in the preamble.
+
+Both errors are line-numbered.
+
+Without this directive (and without `--env`), no environment file is loaded; only in-file `@variables` resolve.
+
+== Section-preamble directives
+
+Section-preamble directives appear between a `###` separator line and the request line.
+They apply only to the request block they precede.
+Multiple directives may be stacked on the same request:
+
+[source,asciidoc]
+----
+### Slow upload
+# @timeout 5000
+# @connection-timeout 1000
+# @no-redirect
+# @expect-status 201
+POST {{host}}/api/upload
+----
+
+=== `# @timeout`
+
+Sets the total per-request timeout.
+The timer starts when the request is initiated and covers the entire round-trip including connection establishment, sending, and receiving the response body.
+
+[source,asciidoc]
+----
+# @timeout 5000
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @timeout <milliseconds>`
+
+| Unit
+| Integer milliseconds
+
+| Default
+| No timeout (platform default)
+|===
+
+*Validation error:*
+
+* `@timeout expected a millisecond integer, got '<value>'` — the value is not a non-negative integer.
+
+=== `# @connection-timeout`
+
+Sets the TCP connection timeout only.
+Once the connection is established this timer stops; use `# @timeout` to bound the total duration.
+
+[source,asciidoc]
+----
+# @connection-timeout 1000
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @connection-timeout <milliseconds>`
+
+| Unit
+| Integer milliseconds
+
+| Default
+| No connection timeout (platform default)
+|===
+
+*Validation error:*
+
+* `@connection-timeout expected a millisecond integer, got '<value>'` — the value is not a non-negative integer.
+
+=== `# @no-redirect`
+
+Disables automatic HTTP redirect following for this request.
+When present, `3xx` responses are returned to the caller as-is rather than being followed transparently.
+
+[source,asciidoc]
+----
+# @no-redirect
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @no-redirect` (no value)
+
+| Default
+| Redirects are followed
+|===
+
+Any value after `# @no-redirect` is ignored.
+
+=== `# @fragments`
+
+Appends the contents of a GraphQL fragment file to the request operation before it is sent.
+This lets shared fragments live in separate files and be referenced from multiple request blocks.
+
+[source,asciidoc]
+----
+# @fragments ./fragments/user-fields.graphql
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @fragments <path>`
+
+| Path resolution
+| Relative to the `.http` file's directory
+
+| Interpolation
+| `{{var}}` references in the path are expanded before the file is opened
+
+| Repeatable
+| Yes — each directive appends another file; they are concatenated in declaration order
+|===
+
+*Validation error:*
+
+* `@fragments requires a path` — the directive appears with no value.
+
+NOTE: `# @fragments` only affects `GRAPHQL` requests.
+It has no effect on plain HTTP requests.
+
+=== `# @expect-status`
+
+Asserts that the response HTTP status code is one of the listed values.
+If the actual status is not in the list the run fails with a line-numbered diagnostic and exits non-zero.
+
+[source,asciidoc]
+----
+# @expect-status 200
+# @expect-status 200,201,204
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @expect-status <code>[,<code>...]`
+
+| Separator
+| Comma or whitespace between codes
+
+| Repeatable
+| Yes — each directive adds another `Status` assertion
+|===
+
+*Validation errors:*
+
+* `@expect-status requires at least one status code` — the directive appears with no value, or the value is blank after splitting.
+* `@expect-status got non-integer code '<value>'` — a token in the list is not a valid integer.
+
+Failure output format: `<file>:<line>: expected status [<codes>], got <actual>`.
+
+=== `# @expect-header`
+
+Asserts that a named response header exists and that its value contains the given substring.
+The header name lookup is case-insensitive.
+
+[source,asciidoc]
+----
+# @expect-header content-type application/json
+# @expect-header X-Request-Id req-
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @expect-header <name> <substring>`
+
+| Name matching
+| Case-insensitive
+
+| Value matching
+| Substring (not a regular expression)
+
+| Repeatable
+| Yes — each directive adds another `Header` assertion
+|===
+
+*Validation error:*
+
+* `@expect-header requires '<name> <substring>'` — the directive has fewer than two whitespace-separated tokens.
+
+Failure output format: `<file>:<line>: header '<name>' not found` or `<file>:<line>: header '<name>' value '<actual>' does not contain '<substring>'`.
+
+=== `# @expect-json`
+
+Asserts that a value inside the response JSON body matches an expected string.
+The location is specified using https://www.rfc-editor.org/rfc/rfc6901[JSON Pointer (RFC 6901)] syntax.
+
+[source,asciidoc]
+----
+# @expect-json /status ok
+# @expect-json /users/0/name Alice
+# @expect-json /count 42
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @expect-json <pointer> <expected>`
+
+| Pointer format
+| RFC 6901 — path segments separated by `/`, leading `/` required
+
+| Value matching
+| Equality against the literal expected text (string, number, bool, or `null`)
+
+| Repeatable
+| Yes — each directive adds another `JsonValue` assertion
+|===
+
+*Validation error:*
+
+* `@expect-json requires '<pointer> <expected>'` — the directive has fewer than two whitespace-separated tokens.
+
+Failure output format: `<file>:<line>: JSON pointer '<pointer>' value '<actual>' != '<expected>'`.
+
+== Stacking directives — worked example
+
+The following request block demonstrates several directives together:
+
+[source,asciidoc]
+----
+### Create user
+# @timeout 3000
+# @connection-timeout 500
+# @expect-status 201
+# @expect-header content-type application/json
+# @expect-json /name Alice
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Alice",
+  "email": "alice@example.com"
+}
+----
+
+Directives are processed in declaration order but all apply independently.
+Assertion failures are collected and reported together after the response is received.
+
+For the full assertion semantics, including how failures interact with exit codes and JSON output, see xref:assertions.adoc[].

@@ -1,0 +1,30 @@
+name: zed-http-client
+title: HTTP Client for Zed
+version: ~
+nav:
+  - modules/ROOT/nav.adoc
+asciidoc:
+  attributes:
+    project-version: '0.4.1'
+    project-repo: 'https://github.com/bovinemagnet/zed-http-client'
+    grammar-repo: 'https://github.com/bovinemagnet/tree-sitter-http-request'
+    source-highlighter: highlight.js
+    icons: font
+    experimental: ''
+    table-stripes: even
+    page-toclevels: 2
+    # Placeholders used inside example `.http`, JSON, and shell snippets.
+    # AsciiDoc would otherwise treat `{name}` as an attribute reference and
+    # strip the curly braces when the attribute isn't defined. The backslash
+    # makes AsciiDoc keep the literal `{` instead of recursing.
+    host: '\{host}'
+    token: '\{token}'
+    localtoken: '\{localtoken}'
+    var: '\{var}'
+    varname: '\{varname}'
+    variable: '\{variable}'
+    interpolation: '\{interpolation}'
+    bar: '\{bar}'
+    run: '\{run}'
+    apiversion: '\{apiversion}'
+    version: '\{version}'

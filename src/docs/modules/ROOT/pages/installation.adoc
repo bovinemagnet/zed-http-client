@@ -1,0 +1,132 @@
+= Installation
+:description: How to install the zed-http-client Zed extension and the zed-http CLI.
+
+`zed-http-client` ships as two separate artefacts: a Zed extension for editor integration, and a standalone CLI binary for terminal use.
+You can install either or both, independently.
+
+== As a Zed extension
+
+The extension is not yet listed in the official Zed extension registry (registry submission is a deferred step).
+In the meantime, install it as a _dev extension_ pointing at a local clone of the repository.
+
+.Prerequisites
+* Zed editor installed and running.
+* A local clone of {project-repo}.
+* The extension's Tree-sitter grammar is published at {grammar-repo}.
+  Zed fetches the grammar automatically when loading the extension, using the SHA pinned in `extension.toml` — no separate grammar install is needed.
+
+.Steps
+. Clone the repository if you have not already:
++
+[source,bash]
+----
+git clone https://github.com/bovinemagnet/zed-http-client.git
+----
+
+. Open the Zed command palette (`cmd+shift+p` / `ctrl+shift+p`) and run:
++
+[source]
+----
+zed: install dev extension
+----
+
+. In the file-picker that appears, navigate to the cloned directory and confirm.
+
+Zed will compile the extension grammar and activate file-type recognition for `.http` and `.rest` files.
+
+[NOTE]
+====
+The `extension.toml` manifest references the grammar under the key `[grammars.http_request]`.
+The corresponding Rust crate inside Zed must be `tree_sitter_http_request` (underscore, not hyphen).
+A mismatch between the manifest key and the crate name will cause silent grammar loading failures.
+If highlighting does not appear, verify that the key reads `http_request` throughout — this was a known issue fixed in the v0.4 era.
+====
+
+=== Suffix conflicts
+
+If another Zed extension that also claims `.http` files is installed (for example `tie304/zed-http`), only one extension will handle a given file.
+The conflict may result in neither extension's highlighting appearing, depending on load order.
+
+To resolve the conflict, uninstall the other extension via the Zed extensions panel.
+Alternatively, work with `.rest` files during testing — only this extension registers that suffix.
+
+== As a standalone CLI
+
+The `zed-http` binary can be installed globally or used in-place during development.
+
+=== Install to `~/.cargo/bin`
+
+[source,bash]
+----
+cargo install --path crates/zed-http-cli
+----
+
+This places `zed-http` on your `PATH` so it can be called from any directory.
+Verify with:
+
+[source,bash]
+----
+zed-http --version
+----
+
+=== Run in-place during development
+
+If you are working inside the cloned repository, no install step is needed.
+The `.zed/tasks.json` in the project root invokes `cargo run -p zed-http-cli` directly, so the Zed task integration works without a global install.
+You can also run it manually from the repository root:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- --help
+----
+
+The double dash (`--`) separates Cargo's own flags from the arguments passed to `zed-http`.
+
+== Verifying the install
+
+Run the `list` command against the bundled example file.
+This exercises the parser without making any network request:
+
+[source,bash]
+----
+zed-http list --file examples/requests.http
+----
+
+Expected output:
+
+[source,text]
+----
+1. Health check              GET      line 4
+2. List users                GET      line 9
+3. Create user               POST     line 14
+4. Update user               PATCH    line 23
+5. Delete user               DELETE   line 31
+6. Slow upload with options  POST     line 36
+7. GraphQL user query        GRAPHQL  line 49
+----
+
+If you are running in-place, prefix the command with `cargo run -p zed-http-cli --`:
+
+[source,bash]
+----
+cargo run -p zed-http-cli -- list --file examples/requests.http
+----
+
+=== Diagnosing a broken install
+
+Empty `injections.scm` files::
+  Zed rejects injection query files that are completely empty.
+  If syntax highlighting for embedded content (JSON bodies, GraphQL queries) is absent, check that `languages/http-request/injections.scm` is non-empty.
+
+Grammar SHA mismatch::
+  The `rev` field in `extension.toml` under `[grammars.http_request]` must point to a valid commit on {grammar-repo}.
+  If Zed reports a grammar compile error, confirm the SHA is current.
+
+Hyphen vs underscore in the grammar key::
+  The manifest key is `[grammars.http_request]` (underscore).
+  The Rust crate Zed expects is also `tree_sitter_http_request`.
+  If you see the grammar registered but Tree-sitter fails to activate, a key mismatch is the most likely cause.
+
+== Next steps
+
+Once the extension and CLI are in place, follow xref:getting-started.adoc[] to send your first request and wire up environment files.

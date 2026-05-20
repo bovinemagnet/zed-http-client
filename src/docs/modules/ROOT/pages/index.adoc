@@ -1,0 +1,102 @@
+= HTTP Client for Zed
+:description: Overview of the zed-http-client extension and companion CLI.
+
+`zed-http-client` is a Zed editor extension and companion Rust CLI (`zed-http`) for running IntelliJ-style `.http` and `.rest` request files directly from the editor or from a terminal.
+It is compatible with `http-client.env.json` environment files, supports GraphQL including schema introspection and variable validation, response assertions, a persistent cookie jar, and Postman v2.1 collection import.
+The HTTP client is built in Rust against `reqwest` with `rustls` — no OpenSSL dependency required.
+This project is not affiliated with JetBrains.
+
+== What you get
+
+* xref:http-file-syntax.adoc[`.http` and `.rest` file parsing] — `###`-separated request blocks, in-file `@var = value` declarations, `{{interpolation}}`, body-from-file (`< ./path`), and response redirects (`>>`)
+* xref:environments.adoc[Environment file support] — `http-client.env.json` and `http-client.private.env.json` discovery, multi-env overlays, and the `# @env` file-level directive
+* xref:graphql.adoc[GraphQL requests] — native `GRAPHQL` pseudo-method, schema introspection, schema-aware field validation, and fragment includes via `# @fragments`
+* xref:assertions.adoc[Response assertions] — `# @expect-status`, `# @expect-header`, and `# @expect-json` directives with non-zero exit on failure
+* xref:cookies.adoc[Persistent cookie jar] — cookies survive across separate CLI invocations; disable or relocate with flags
+* xref:postman-import.adoc[Postman v2.1 import] — convert a Postman collection into a canonical `.http` file
+* xref:zed-integration.adoc[Zed task integration] — runnable detection and `tasks.json` wiring so requests fire from the editor
+* xref:cli-reference.adoc[Full CLI] — `run`, `list`, `envs`, `check`, `format`, `introspect`, `schema`, and `import` subcommands
+
+== At a glance
+
+The snippet below demonstrates the most common primitives in a single file.
+
+[source,http]
+----
+# @env dev                         <1>
+
+@baseUrl = http://localhost:8080    <2>
+
+### Health check                    <3>
+# @expect-status 200
+GET {{baseUrl}}/actuator/health
+Accept: application/json
+
+###                                 <4>
+GRAPHQL {{host}}/graphql
+Authorization: Bearer {{token}}
+
+query GetUser($id: ID!) {
+  user(id: $id) {
+    id
+    name
+  }
+}
+
+{
+  "id": "123"
+}
+----
+<1> Selects the `dev` entry from `http-client.env.json` when no `--env` flag is passed.
+<2> An in-file variable that overrides or supplements environment file values.
+<3> Named request with a status assertion.  `# @expect-status` causes `run` to exit non-zero if the server returns anything other than `200`.
+<4> An unnamed `GRAPHQL` block.  The CLI converts it to a canonical `{query, variables, operationName}` JSON payload before sending.
+
+== Project layout
+
+----
+zed-http-client/
+  extension.toml                  <1>
+  tasks.json.example              <2>
+  Cargo.toml
+  crates/
+    zed-http-cli/                 <3>
+    zed-http-core/                <4>
+  languages/
+    http-request/                 <5>
+  grammars/
+    tree-sitter-http-request/     <6>
+  examples/                       <7>
+  src/docs/                       <8>
+----
+<1> Zed extension manifest; pins the Tree-sitter grammar SHA.
+<2> Ready-to-copy Zed task definitions; copy to `.zed/tasks.json` in your project.
+<3> The `zed-http` binary crate.
+<4> The parsing, interpolation, validation, and HTTP execution library.
+<5> Zed language configuration: file-type associations, highlight queries, injection queries, and the snippets file.
+<6> Local mirror of the published `tree-sitter-http-request` grammar (pinned via SHA in `extension.toml`).
+<7> Example `.http` file and environment JSON used throughout this documentation.
+<8> This documentation (Antora component, ROOT module).
+
+== Status
+
+Current release: *{project-version}*.
+
+The PRD roadmap tiers v0.1 through v0.4 are complete:
+
+* *v0.1 / v0.2* — MVP parser, CLI (`run`, `list`, `envs`), Zed language support, environment files, response persistence
+* *v0.1 tag (0.0.3)* — first tagged release with full v0.1 + v0.2 feature set
+* *v0.1 / v0.3 GraphQL tier* — `format`, `introspect`, schema-aware validation, fragment includes, `check` pre-flight gate, `# @env` directive
+* *v0.4* — persistent cookie jar, response assertions, Postman v2.1 import, `# @env` file directive
+
+The following items remain deferred:
+
+* Multipart form bodies
+* JavaScript pre- and post-request scripts
+* A custom rich Zed output pane
+
+See xref:roadmap.adoc[] for the full list of deferred items and the planned direction.
+
+== Next steps
+
+xref:installation.adoc[Installation] — xref:getting-started.adoc[Getting started] — xref:cli-reference.adoc[CLI reference]

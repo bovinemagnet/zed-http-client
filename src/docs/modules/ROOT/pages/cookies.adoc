@@ -1,0 +1,135 @@
+= Persistent Cookies
+:description: How the zed-http cookie jar works, where it lives, and how to control it.
+
+`zed-http run` automatically loads and saves cookies between invocations.
+Multi-step workflows — login, then fetch a protected resource, then log out — survive across separate CLI runs without any manual token passing.
+The jar is built on `cookie_store` and `reqwest_cookie_store`.
+
+== Jar location
+
+By default the cookie jar lives at:
+
+----
+<base>/.zed-http/cookies.json
+----
+
+`<base>` is the worktree root passed via `--worktree`, or the directory containing the `.http` file when `--worktree` is not supplied.
+The `.zed-http/` directory is the same one that holds the response cache and the schema cache.
+
+Two flags override the default behaviour:
+
+`--cookie-jar <path>`::
+  Load and save the jar from `<path>` instead of the default location.
+  Useful when several `.http` files in different directories should share one jar.
+
+`--no-cookies`::
+  Disable the cookie jar entirely for this invocation.
+  Cookies sent by the server are discarded; no cookies from a previous run are sent.
+
+== What is persisted
+
+The jar serialises *both* persistent cookies (those with a `Max-Age` or `Expires` attribute) and session-scoped cookies (those without either).
+
+Persisting session cookies is deliberate.
+Each `zed-http run` is a fresh process with no in-memory state carried over from previous runs.
+Without persisting session cookies you would lose your session on every invocation, making multi-step login flows impossible.
+
+Cookies are stored in JSON format at the jar path.
+The file is written atomically (create then rename) after a successful response, so a crashed run does not corrupt the jar.
+
+== Worked example
+
+The following two requests demonstrate a cookie round-trip using the public `httpbin.org` test service.
+
+.Step 1 — set a cookie
+[source,http]
+----
+### Set cookie
+GET https://httpbin.org/cookies/set?greeting=hello
+----
+
+Run it:
+
+[source,bash]
+----
+zed-http run --file requests.http --name "Set cookie"
+----
+
+After the run, the jar at `.zed-http/cookies.json` contains something similar to:
+
+[source,json]
+----
+[
+  {
+    "raw_cookie": "greeting=hello",
+    "url": {
+      "scheme": "https",
+      "host": "httpbin.org",
+      "path": "/cookies/set"
+    }
+  }
+]
+----
+
+.Step 2 — echo the cookie
+[source,http]
+----
+### Echo cookies
+GET https://httpbin.org/cookies
+----
+
+[source,bash]
+----
+zed-http run --file requests.http --name "Echo cookies"
+----
+
+The response body echoes the cookie set in the previous run:
+
+[source,json]
+----
+{
+  "cookies": {
+    "greeting": "hello"
+  }
+}
+----
+
+No manual cookie header is needed on the second request because the jar supplied it automatically.
+
+== Wiping the jar
+
+Delete the jar file to start with a clean session:
+
+[source,bash]
+----
+rm .zed-http/cookies.json
+----
+
+To wipe all extension state at once — response cache, schema cache, and cookie jar — remove the whole directory:
+
+[source,bash]
+----
+rm -rf .zed-http/
+----
+
+[CAUTION]
+====
+Removing `.zed-http/` also deletes any cached schemas populated by `zed-http introspect`.
+If you have schemas you want to keep, remove only `cookies.json` rather than the whole directory.
+====
+
+== Caveats
+
+Cookie scoping::
+  Cookies are scoped by host and path according to RFC 6265.
+  A cookie set on `api.example.com` is not sent to `auth.example.com`, even within the same `.http` file.
+
+Jar isolation::
+  The jar is not shared between projects.
+  Each `.http` file resolves its own `<base>` independently, so two files in different directories maintain separate jars by default.
+  Use `--cookie-jar <shared-path>` to share a jar explicitly.
+
+Session expiry::
+  The jar persists session cookies indefinitely (across process boundaries) because each invocation is a fresh process.
+  If a server-side session expires between runs, the cookie will still be sent but the server will reject it.
+  Wipe the jar and re-authenticate to recover.

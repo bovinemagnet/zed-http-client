@@ -1,0 +1,194 @@
+= Environments and Variables
+:description: How zed-http-client discovers environment files, layers variables, and masks secrets.
+
+Environment files let you maintain separate sets of variables — hosts, tokens, feature flags — for different deployment targets such as `dev`, `test`, and `prod`, without duplicating request definitions.
+
+For the `# @env` directive that selects an environment from inside a request file see xref:directives.adoc[].
+For `{{var}}` interpolation rules in request files see xref:http-file-syntax.adoc#variables-and-interpolation[].
+
+== Discovery
+
+The runner walks *up* the directory tree from the `.http` file's location toward the worktree root, looking for each environment filename in turn.
+The *first* matching file found in that walk is used — no further ancestors are checked for that filename.
+
+Two filenames are searched independently:
+
+[cols="1,2,2",options="header"]
+|===
+| File | Purpose | Typical VCS treatment
+
+| `http-client.env.json`
+| Public variables — hosts, non-secret identifiers, feature flags.
+| Checked in.
+
+| `http-client.private.env.json`
+| Private overrides — real tokens, passwords, API keys.
+| Listed in `.gitignore`.
+|===
+
+Passing `--worktree <path>` to any `zed-http` subcommand caps the upward walk at that directory.
+Without it the walk continues to the filesystem root, stopping as soon as both files are found.
+
+If neither file exists, the runner continues with no environment variables; only in-file `@variables` are available.
+
+== Layering
+
+Variables are merged in the following order.
+Each later step overrides values from the steps before it:
+
+. *Public env file* — keys from `http-client.env.json` under the selected environment name.
+. *Private env file* — keys from `http-client.private.env.json` under the same environment name, overlaid on top of the public values.
+. *In-file variables* — `@name = value` declarations in the request file preamble always override both env files.
+. _(Reserved)_ CLI per-variable overrides are not yet exposed as a flag.
+
+This layering means you can commit placeholder values in `http-client.env.json` and provide real secrets by adding matching keys in `http-client.private.env.json`, with no changes to the request file.
+
+== File shape
+
+Both files share the same JSON structure: a top-level object keyed by *environment name*, each entry an object mapping variable name to string value.
+
+[source,json]
+----
+{
+  "dev": {
+    "host": "http://localhost:8080",
+    "token": ""
+  },
+  "test": {
+    "host": "https://test.example.com",
+    "token": ""
+  },
+  "prod": {
+    "host": "https://api.example.com",
+    "token": ""
+  }
+}
+----
+
+The example above (`examples/http-client.env.json` in the repository) uses empty strings for `token` as placeholders.
+Real token values belong in `http-client.private.env.json`:
+
+[source,json]
+----
+{
+  "dev": {
+    "token": "dev-bearer-token-goes-here"
+  },
+  "prod": {
+    "token": "prod-bearer-token-goes-here"
+  }
+}
+----
+
+A private file only needs to list the keys it overrides — it does not need to repeat every key from the public file.
+
+Non-string JSON values (numbers, booleans) are coerced to their string representations when loaded.
+
+== Selecting an environment
+
+An environment is selected in one of three ways, in descending priority:
+
+[cols="1,3,1",options="header"]
+|===
+| Method | How | Priority
+
+| CLI flag
+| `zed-http run --env prod ...`
+| Highest — always wins
+
+| File directive
+| `# @env dev` in the request file preamble (before the first `###`)
+| Used when no `--env` flag is passed
+
+| Neither
+| No environment file is loaded; only in-file `@variables` resolve.
+| (default)
+|===
+
+[source,asciidoc]
+----
+# @env dev
+
+@localToken = local-token-from-file
+
+### Health check
+GET {{host}}/actuator/health
+----
+
+In the example above, running `zed-http run --file requests.http --line 5` loads the `dev` environment from `http-client.env.json` and `http-client.private.env.json`.
+Running `zed-http run --file requests.http --line 5 --env prod` overrides the directive and loads `prod` instead.
+
+== Variable resolution
+
+After the env files and in-file variables are merged into a single map, the resolver performs *multiple passes* to expand variable references inside variable values:
+
+[source,asciidoc]
+----
+@host    = http://localhost:8080
+@baseUrl = {{host}}/api
+----
+
+After one pass `{{host}}/api` becomes `http://localhost:8080/api`.
+Long chains are resolved iteratively; the pass count equals the total number of variables, so even deeply nested chains settle completely.
+
+=== Missing references inside variable values
+
+If a variable value references a name that is not present in the merged map, the literal `{{...}}` text is kept as-is.
+No error is raised at resolution time.
+
+This is intentional: a typo in one private variable should not prevent unrelated requests from running.
+However, if the unresolved reference later appears in a URL, header, or body during interpolation, that *is* a hard error.
+
+=== Missing references during interpolation
+
+When the runner substitutes variables into the URL, headers, body, redirect path, or fragments path, any reference that cannot be resolved causes the request to abort immediately with a `MissingVariable` diagnostic.
+Sending the literal `{{token}}` to a server is almost never correct, so the error is intentionally strict.
+
+== Secrets and masking
+
+When `--verbose` is passed, the runner prints the fully resolved request before sending it.
+To avoid leaking secrets in terminal output or CI logs, values are masked with `***` if their *key* contains any of the following substrings (case-insensitive):
+
+* `token`
+* `secret`
+* `password`
+* `apikey`
+* `api_key`
+* `authorization`
+
+[source,asciidoc]
+----
+Resolved variables:
+  host          = http://localhost:8080
+  token         = ***
+  myApiKey      = ***
+  X-Request-Id  = req-12345
+----
+
+IMPORTANT: This is a display-only safeguard.
+The wire request is *not* masked — the real value is sent to the server.
+Masking only affects what `--verbose` prints to your terminal.
+
+For genuine secret management, keep real values in `http-client.private.env.json` and add that filename to `.gitignore`.
+Never commit real credentials to the public env file.
+
+== Listing available environments
+
+To see which environment names are defined across both files, run:
+
+[source,bash]
+----
+zed-http envs --file requests.http
+----
+
+The command enumerates the *union* of environment names present in both `http-client.env.json` and `http-client.private.env.json`.
+It uses the same upward directory walk as the runner, so `--worktree <path>` can be used to control the search boundary.
+
+Example output for the `examples/` directory:
+
+[source,bash]
+----
+dev
+test
+prod
+----

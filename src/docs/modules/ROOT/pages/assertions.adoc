@@ -1,0 +1,161 @@
+= Response Assertions
+:description: Using @expect-status, @expect-header, and @expect-json to validate responses in zed-http run.
+
+Response assertions let a `.http` file fail loudly when its semantics drift.
+They are useful for CI smoke tests, pre-deploy sanity checks, and any workflow where a silent wrong answer is worse than a hard failure.
+
+All assertions are written as `# @` comment directives in the section preamble — between the `###` separator and the request line.
+`zed-http run` evaluates them immediately after the response body is captured; no additional command is needed.
+
+== The three assertion types
+
+[#expect-status]
+=== `# @expect-status`
+
+Accepts a comma-separated list of HTTP status codes.
+The assertion passes if the response status matches *any* code in the list.
+
+[source,http]
+----
+# @expect-status 200,204
+DELETE {{host}}/api/users/123
+Authorization: Bearer {{token}}
+----
+
+Failure message:
+
+----
+expected status in [200,204], got 500
+----
+
+[#expect-header]
+=== `# @expect-header`
+
+Performs a case-insensitive lookup of the named response header and checks that its value contains the expected substring.
+
+[source,http]
+----
+# @expect-header content-type application/json
+GET {{host}}/api/users
+Accept: application/json
+----
+
+Two failure conditions:
+
+Header absent::
+----
+expected header 'content-type' to be present
+----
+
+Header present but substring not found::
+----
+header 'content-type' did not contain 'application/json' (was 'text/html; charset=utf-8')
+----
+
+The header name lookup is case-insensitive (`Content-Type`, `content-type`, and `CONTENT-TYPE` all match the same header).
+The substring check is case-sensitive.
+
+[#expect-json]
+=== `# @expect-json`
+
+Resolves a https://datatracker.ietf.org/doc/html/rfc6901[JSON Pointer] into the response body and checks the resolved value for equality against the expected literal.
+
+[source,http]
+----
+# @expect-json /users/0/name Alice
+GET {{host}}/api/users
+----
+
+Supported expected-value types: string, integer, floating-point number, boolean (`true` / `false`), and `null`.
+Arrays and objects cannot be compared with this directive.
+
+Failure messages:
+
+Pointer does not resolve::
+----
+JSON pointer '/users/0/name' did not resolve
+----
+
+Value mismatch::
+----
+JSON pointer '/users/0/name' was 'Bob', expected 'Alice'
+----
+
+Response body is not JSON::
+----
+response body was not JSON: ...
+----
+
+[TIP]
+====
+The JSON body is parsed once and cached across all `# @expect-json` directives on the same request.
+Files with several JSON pointer assertions pay only a single parse cost.
+====
+
+== Output and exit code
+
+Assertion failures are printed to stderr in the format:
+
+----
+<file>:<line>: <message>
+----
+
+For example:
+
+----
+requests.http:4: expected status in [200], got 404
+requests.http:5: header 'content-type' did not contain 'application/json' (was 'text/plain')
+----
+
+The `--output json` mode includes a `response.assertion_failures` array in the JSON envelope:
+
+[source,json]
+----
+{
+  "request": { ... },
+  "response": {
+    "status": "404 Not Found",
+    "duration_ms": 42,
+    "assertion_failures": [
+      { "line": 4, "message": "expected status in [200], got 404" }
+    ]
+  }
+}
+----
+
+`zed-http run` exits with a non-zero code if *any* assertion on the selected request failed, regardless of output mode.
+
+== Cost model
+
+Assertions do not modify the wire request in any way.
+They are evaluated against the response body that was already captured, and the body is parsed lazily: `# @expect-status` and `# @expect-header` never trigger a JSON parse.
+`# @expect-json` triggers a single parse on first use, shared with all subsequent `# @expect-json` directives on the same request.
+
+== Worked example
+
+[source,http]
+----
+### Create user
+# @expect-status 201
+# @expect-header content-type application/json
+# @expect-json /name Alice
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Alice",
+  "email": "alice@example.com"
+}
+----
+
+With a healthy server this request completes silently.
+If the server returns `400 Bad Request` with a plain-text body, you would see:
+
+----
+requests.http:2: expected status in [201], got 400
+requests.http:3: header 'content-type' did not contain 'application/json' (was 'text/plain')
+requests.http:4: response body was not JSON: ...
+----
+
+Cross-reference: xref:directives.adoc[] for the full list of directives and their syntax rules.
