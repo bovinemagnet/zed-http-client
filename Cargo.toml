@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/zed-http-core",
+  "crates/zed-http-cli"
+]
+resolver = "2"

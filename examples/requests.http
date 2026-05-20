@@ -1,0 +1,49 @@
+@localToken = local-token-from-file
+
+### Health check
+GET {{host}}/actuator/health
+Accept: application/json
+
+### List users
+GET {{host}}/api/users
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Create user
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Alice",
+  "email": "alice@example.com"
+}
+
+### Update user
+PATCH {{host}}/api/users/123
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Alice Updated"
+}
+
+### Delete user
+DELETE {{host}}/api/users/123
+Authorization: Bearer {{token}}
+
+### GraphQL user query
+GRAPHQL {{host}}/graphql
+Authorization: Bearer {{token}}
+
+query GetUser($id: ID!) {
+  user(id: $id) {
+    id
+    name
+    email
+  }
+}
+
+{
+  "id": "123"
+}
