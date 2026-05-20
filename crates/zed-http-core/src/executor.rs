@@ -8,7 +8,8 @@ use crate::{
     graphql::render_graphql_json_with_extras,
     interpolate::{interpolate_text, resolve_variables},
     model::{
-        RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions, ResponseRedirect,
+        RequestBlock, RequestBody, RequestFile, RequestMethod, RequestOptions, ResponseAssertion,
+        ResponseRedirect,
     },
     parser::{parse_request_file, select_request_by_line, select_request_by_name},
 };
@@ -30,6 +31,7 @@ pub struct ResolvedRequest {
     pub headers: IndexMap<String, String>,
     pub body: Option<String>,
     pub options: RequestOptions,
+    pub assertions: Vec<ResponseAssertion>,
     pub response_redirect: Option<ResponseRedirect>,
     pub variables: VariableMap,
     pub range_start_line: usize,
@@ -147,6 +149,7 @@ pub fn prepare_request(
         headers,
         body,
         options: request.options,
+        assertions: request.assertions,
         response_redirect,
         variables,
         range_start_line: request.range.start_line,

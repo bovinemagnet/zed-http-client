@@ -1,4 +1,6 @@
-use crate::model::{RequestBlock, RequestBody, RequestFile, RequestOptions, ResponseRedirect};
+use crate::model::{
+    RequestBlock, RequestBody, RequestFile, RequestOptions, ResponseAssertion, ResponseRedirect,
+};
 
 pub fn format_request_file(file: &RequestFile) -> String {
     let mut output = String::new();
@@ -32,6 +34,7 @@ fn format_request(output: &mut String, request: &RequestBlock) {
     output.push('\n');
 
     format_options(output, &request.options);
+    format_assertions(output, &request.assertions);
 
     output.push_str(&format!("{} {}\n", request.method.as_str(), request.url));
 
@@ -70,6 +73,31 @@ fn format_options(output: &mut String, options: &RequestOptions) {
     }
     for path in &options.fragment_paths {
         output.push_str(&format!("# @fragments {path}\n"));
+    }
+}
+
+fn format_assertions(output: &mut String, assertions: &[ResponseAssertion]) {
+    for assertion in assertions {
+        match assertion {
+            ResponseAssertion::Status { codes, .. } => {
+                let joined = codes
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                output.push_str(&format!("# @expect-status {joined}\n"));
+            }
+            ResponseAssertion::Header {
+                name, substring, ..
+            } => {
+                output.push_str(&format!("# @expect-header {name} {substring}\n"));
+            }
+            ResponseAssertion::JsonValue {
+                pointer, expected, ..
+            } => {
+                output.push_str(&format!("# @expect-json {pointer} {expected}\n"));
+            }
+        }
     }
 }
 

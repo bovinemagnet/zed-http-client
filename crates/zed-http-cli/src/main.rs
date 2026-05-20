@@ -1,19 +1,23 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use cookie_store::CookieStore;
 use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
+use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
-    build_preview, format_pretty_response, format_request_file, introspection_payload,
-    list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
-    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
-    validate_request_with_schema, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
-    ValidationIssue,
+    build_preview, cookie_jar_path, evaluate_assertions, format_pretty_response,
+    format_request_file, import_postman_collection, introspection_payload, list_environments,
+    load_cached_schema, mask_variables, parse_request_file, prepare_request, response_root,
+    save_response, schema_root, schema_slug, validate_request_file_with_schemas,
+    validate_request_with_schema, AssertionResponse, RequestMethod, RequestSelector,
+    ResolvedRequest, ResponseSummary, ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -48,6 +52,10 @@ enum Commands {
         verbose: bool,
         #[arg(long)]
         no_validate: bool,
+        #[arg(long)]
+        no_cookies: bool,
+        #[arg(long)]
+        cookie_jar: Option<PathBuf>,
     },
     Check {
         #[arg(long)]
@@ -93,6 +101,20 @@ enum Commands {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ImportCommand {
+    Postman {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -130,6 +152,8 @@ async fn main() -> Result<()> {
             output,
             verbose,
             no_validate,
+            no_cookies,
+            cookie_jar,
         } => {
             run_command(RunOptions {
                 file: &file,
@@ -140,6 +164,8 @@ async fn main() -> Result<()> {
                 output_mode: output,
                 verbose,
                 no_validate,
+                no_cookies,
+                cookie_jar: cookie_jar.as_deref(),
             })
             .await
         }
@@ -149,6 +175,7 @@ async fn main() -> Result<()> {
             worktree,
         } => check_command(&file, env.as_deref(), worktree.as_deref()),
         Commands::Schema { command } => schema_command(command),
+        Commands::Import { command } => import_command(command),
         Commands::List { file } => list_command(&file),
         Commands::Envs { file, worktree } => envs_command(&file, worktree.as_deref()),
         Commands::Format {
@@ -286,6 +313,39 @@ fn schema_command(command: SchemaCommand) -> Result<()> {
             let value: serde_json::Value =
                 serde_json::from_str(&raw).context("cached schema is not valid JSON")?;
             print_schema_summary(&host, &value);
+            Ok(())
+        }
+    }
+}
+
+fn import_command(command: ImportCommand) -> Result<()> {
+    match command {
+        ImportCommand::Postman { file, out } => {
+            let raw = fs::read_to_string(&file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+            let request_file = import_postman_collection(&raw)
+                .with_context(|| format!("failed to import {}", file.display()))?;
+            let rendered = format_request_file(&request_file);
+            match out {
+                Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            fs::create_dir_all(parent).with_context(|| {
+                                format!("failed to create output directory {}", parent.display())
+                            })?;
+                        }
+                    }
+                    fs::write(&path, &rendered)
+                        .with_context(|| format!("failed to write {}", path.display()))?;
+                    eprintln!(
+                        "Imported {} request(s) from {} → {}",
+                        request_file.requests.len(),
+                        file.display(),
+                        path.display()
+                    );
+                }
+                None => print!("{rendered}"),
+            }
             Ok(())
         }
     }
@@ -507,6 +567,8 @@ struct RunOptions<'a> {
     output_mode: OutputMode,
     verbose: bool,
     no_validate: bool,
+    no_cookies: bool,
+    cookie_jar: Option<&'a Path>,
 }
 
 async fn run_command(opts: RunOptions<'_>) -> Result<()> {
@@ -519,6 +581,8 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         output_mode,
         verbose,
         no_validate,
+        no_cookies,
+        cookie_jar,
     } = opts;
     let contents =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
@@ -571,7 +635,18 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         println!();
     }
 
-    let client = build_client(&resolved)?;
+    let cookie_jar_target = if no_cookies {
+        None
+    } else {
+        Some(
+            cookie_jar
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| cookie_jar_path(file, worktree)),
+        )
+    };
+    let cookie_store = cookie_jar_target.as_ref().map(|path| load_cookie_jar(path));
+
+    let client = build_client(&resolved, cookie_store.clone())?;
     let method = Method::from_bytes(resolved.http_method.as_bytes())?;
     let mut request = client.request(method, &resolved.url);
     for (name, value) in &resolved.headers {
@@ -585,6 +660,16 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
     let response = request.send().await?;
     let duration = started.elapsed();
     let status = response.status();
+    let header_pairs: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.to_string(), v.to_string()))
+        })
+        .collect();
     let content_type = response
         .headers()
         .get(CONTENT_TYPE)
@@ -592,6 +677,15 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         .map(str::to_string);
     let body_bytes = response.bytes().await?;
     let body_text = String::from_utf8_lossy(&body_bytes).to_string();
+
+    let assertion_failures = evaluate_assertions(
+        &resolved.assertions,
+        &AssertionResponse {
+            status: status.as_u16(),
+            headers: &header_pairs,
+            body: &body_text,
+        },
+    );
     let save_dir = response_root(file, worktree);
     let saved_path = save_response(
         &save_dir,
@@ -625,6 +719,12 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
             if let Some(path) = &redirect_path {
                 println!("Response redirect:\n{}", path.display());
             }
+            if !assertion_failures.is_empty() {
+                eprintln!("\nAssertion failures:");
+                for failure in &assertion_failures {
+                    eprintln!("  {}:{}: {}", file.display(), failure.line, failure.message);
+                }
+            }
         }
         OutputMode::Raw => print!("{}", body_text),
         OutputMode::Json => {
@@ -644,16 +744,64 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
                     "saved_path": summary.saved_path,
                     "redirect_path": redirect_path,
                     "body": body_value,
+                    "assertion_failures": assertion_failures
+                        .iter()
+                        .map(|f| json!({ "line": f.line, "message": f.message }))
+                        .collect::<Vec<_>>(),
                 }
             });
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
     }
 
+    if let (Some(path), Some(store)) = (cookie_jar_target.as_ref(), cookie_store.as_ref()) {
+        save_cookie_jar(path, store)
+            .with_context(|| format!("failed to persist cookie jar to {}", path.display()))?;
+    }
+
+    if !assertion_failures.is_empty() {
+        anyhow::bail!("{} response assertion(s) failed", assertion_failures.len());
+    }
+
     Ok(())
 }
 
-fn build_client(resolved: &ResolvedRequest) -> Result<reqwest::Client> {
+fn load_cookie_jar(path: &Path) -> Arc<CookieStoreMutex> {
+    let store = if path.exists() {
+        match fs::File::open(path) {
+            Ok(file) => {
+                let reader = std::io::BufReader::new(file);
+                cookie_store::serde::json::load(reader).unwrap_or_default()
+            }
+            Err(_) => CookieStore::default(),
+        }
+    } else {
+        CookieStore::default()
+    };
+    Arc::new(CookieStoreMutex::new(store))
+}
+
+fn save_cookie_jar(path: &Path, store: &CookieStoreMutex) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create cookie jar directory {}", parent.display())
+            })?;
+        }
+    }
+    let mut file = fs::File::create(path)?;
+    let guard = store
+        .lock()
+        .map_err(|err| anyhow::anyhow!("cookie store mutex poisoned: {err}"))?;
+    cookie_store::serde::json::save_incl_expired_and_nonpersistent(&guard, &mut file)
+        .map_err(|err| anyhow::anyhow!("failed to serialise cookie jar: {err}"))?;
+    Ok(())
+}
+
+fn build_client(
+    resolved: &ResolvedRequest,
+    cookie_jar: Option<Arc<CookieStoreMutex>>,
+) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder();
     if let Some(ms) = resolved.options.timeout_ms {
         builder = builder.timeout(Duration::from_millis(ms));
@@ -663,6 +811,9 @@ fn build_client(resolved: &ResolvedRequest) -> Result<reqwest::Client> {
     }
     if resolved.options.no_redirect {
         builder = builder.redirect(Policy::none());
+    }
+    if let Some(jar) = cookie_jar {
+        builder = builder.cookie_provider(jar);
     }
     builder
         .build()

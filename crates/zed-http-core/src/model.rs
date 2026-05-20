@@ -23,8 +23,38 @@ pub struct RequestBlock {
     pub headers: Vec<Header>,
     pub body: Option<RequestBody>,
     pub options: RequestOptions,
+    #[serde(default)]
+    pub assertions: Vec<ResponseAssertion>,
     pub response_redirect: Option<ResponseRedirect>,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResponseAssertion {
+    Status {
+        codes: Vec<u16>,
+        line: usize,
+    },
+    Header {
+        name: String,
+        substring: String,
+        line: usize,
+    },
+    JsonValue {
+        pointer: String,
+        expected: String,
+        line: usize,
+    },
+}
+
+impl ResponseAssertion {
+    pub fn source_line(&self) -> usize {
+        match self {
+            Self::Status { line, .. }
+            | Self::Header { line, .. }
+            | Self::JsonValue { line, .. } => *line,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -24,6 +24,10 @@ pub fn schema_root(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
     base_artifact_dir(http_file, worktree_root).join("schema")
 }
 
+pub fn cookie_jar_path(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
+    base_artifact_dir(http_file, worktree_root).join("cookies.json")
+}
+
 fn base_artifact_dir(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf {
     let base = worktree_root
         .map(Path::to_path_buf)

@@ -65,6 +65,7 @@ zed-http check --file examples/requests.http --env dev     # use env for schema 
 zed-http introspect --file examples/requests.http --name "GraphQL user query"
 zed-http schema list                                       # cached schemas
 zed-http schema show --host countries.trevorblades.com
+zed-http import postman --file collection.json --out requests.http
 ```
 
 ### Run a request
@@ -82,6 +83,9 @@ Useful options:
 - `--worktree <path>`: stops environment lookup at the provided directory
 - `--output <pretty|json|raw>`: controls terminal output format
 - `--verbose`: prints masked, fully resolved request details before execution
+- `--no-validate`: skip the pre-flight validation pass
+- `--no-cookies`: don't read or write the cookie jar for this invocation
+- `--cookie-jar <path>`: override the cookie jar location (default `<base>/.zed-http/cookies.json`)
 
 ### List requests
 
@@ -135,6 +139,42 @@ false positives.
 cargo run -p zed-http-cli -- schema list
 cargo run -p zed-http-cli -- schema show --host countries.trevorblades.com
 ```
+
+### Response assertions
+
+Add `# @expect-*` directives to a request and `run` will fail the invocation
+if the response doesn't match:
+
+```http
+### Health check
+# @expect-status 200,204
+# @expect-header content-type application/json
+# @expect-json /status ok
+GET {{host}}/health
+```
+
+Failures appear as `path:line: <message>` on stderr and surface in JSON
+output mode as `response.assertion_failures`.
+
+### Persistent cookie jar
+
+`zed-http run` automatically loads and saves cookies between invocations at
+`<base>/.zed-http/cookies.json`. Both persistent and session-scoped cookies
+are kept so multi-step login → action flows work across separate CLI runs.
+Disable with `--no-cookies` or relocate the jar with `--cookie-jar <path>`.
+
+### Import a Postman collection
+
+```bash
+cargo run -p zed-http-cli -- import postman --file collection.json
+cargo run -p zed-http-cli -- import postman --file collection.json --out requests.http
+```
+
+Translates a Postman v2.1 collection into a canonical `.http` file. Nested
+folders are flattened into request names (`Parent / Child`). Collection
+variables become `@name = value` declarations. `raw` and `graphql` body
+modes are supported; multipart/form-data bodies are skipped (deferred to a
+later release).
 
 ### Include GraphQL fragments from another file
 

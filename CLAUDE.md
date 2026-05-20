@@ -22,6 +22,7 @@ cargo run -p zed-http-cli -- check --file examples/requests.http --env dev
 cargo run -p zed-http-cli -- introspect --file examples/requests.http --name "GraphQL user query"
 cargo run -p zed-http-cli -- schema list
 cargo run -p zed-http-cli -- schema show --host countries.trevorblades.com
+cargo run -p zed-http-cli -- import postman --file collection.json --out requests.http
 ```
 
 Tests (most logic lives in `zed-http-core` as `#[cfg(test)]` modules next to each source file):

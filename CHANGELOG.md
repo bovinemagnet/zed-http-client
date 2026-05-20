@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-20
+
+Opens the v0.4 "IntelliJ parity push" tier from the initial PRD with three
+tractable items: a persistent cookie jar, response assertions, and Postman
+collection import. JS pre-/post-request scripts and the manual multipart
+body syntax remain deferred.
+
+### Added
+
+- Persistent cookie jar shared between `zed-http run` invocations. Defaults
+  to `<base>/.zed-http/cookies.json` (mirroring the other artifact dirs).
+  Both persistent and session-scoped cookies are serialised so multi-step
+  workflows survive across separate CLI invocations. Flags:
+  - `--no-cookies` disables the jar for this invocation.
+  - `--cookie-jar <path>` overrides the jar location.
+- Response assertions via `# @` directives, parsed in the section preamble:
+  - `# @expect-status <code[,code,...]>` — accepts any of the listed codes.
+  - `# @expect-header <name> <substring>` — case-insensitive header lookup,
+    substring match on the value.
+  - `# @expect-json <pointer> <expected>` — JSON Pointer into the response
+    body, equality match against the literal expected text (string, number,
+    bool, or `null`).
+  - Failures are printed with `<file>:<line>: <message>`, surfaced in JSON
+    output as `response.assertion_failures`, and cause a non-zero exit.
+  - The formatter (`zed-http format`) emits each directive back on
+    re-serialisation.
+- `zed-http import postman --file <collection.json> [--out <path>]`
+  translates a Postman v2.1 collection into a canonical `.http` file
+  (default stdout). Supports nested folders (joined as `parent / child` in
+  request names), GET/POST/etc., `raw` JSON bodies, and `graphql` body mode
+  (becomes a `GRAPHQL` request). Collection variables become `@var = value`.
+  Multipart/form-data bodies are skipped (deferred to v0.5).
+- Public core API: `cookie_jar_path`, `evaluate_assertions`,
+  `AssertionFailure`, `AssertionResponse`, `ResponseAssertion`,
+  `import_postman_collection`.
+
+### Changed
+
+- `RequestBlock` grows an `assertions: Vec<ResponseAssertion>` field.
+- `RunOptions` now carries `no_cookies` and `cookie_jar` so the cookie jar
+  state flows alongside the other run options.
+- `zed-http-cli` depends on `cookie_store` (0.21) + `reqwest_cookie_store`
+  (0.8). The `reqwest` feature set gains `cookies`.
+
 ## [0.3.0] - 2026-05-20
 
 Completes the v0.3 GraphQL productivity tier from the initial PRD with

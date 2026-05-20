@@ -2,7 +2,7 @@ use crate::{
     error::HttpClientError,
     model::{
         Header, InPlaceVariable, RequestBlock, RequestBody, RequestFile, RequestMethod,
-        RequestOptions, ResponseRedirect, SourceRange,
+        RequestOptions, ResponseAssertion, ResponseRedirect, SourceRange,
     },
 };
 
@@ -116,6 +116,7 @@ fn parse_section(
 ) -> Result<Option<RequestBlock>, HttpClientError> {
     let mut cursor = 0usize;
     let mut options = RequestOptions::default();
+    let mut assertions: Vec<ResponseAssertion> = Vec::new();
     while cursor < lines.len() {
         let (line_no, line) = lines[cursor];
         let trimmed = line.trim();
@@ -124,7 +125,7 @@ fn parse_section(
             continue;
         }
         if let Some(directive) = parse_option_directive(line) {
-            apply_option(&mut options, &directive, line_no)?;
+            apply_directive(&mut options, &mut assertions, &directive, line_no)?;
             cursor += 1;
             continue;
         }
@@ -194,6 +195,7 @@ fn parse_section(
         headers,
         body,
         options,
+        assertions,
         response_redirect,
         range: SourceRange {
             start_line: request_line_no,
@@ -236,8 +238,9 @@ fn parse_option_directive(line: &str) -> Option<OptionDirective> {
     })
 }
 
-fn apply_option(
+fn apply_directive(
     options: &mut RequestOptions,
+    assertions: &mut Vec<ResponseAssertion>,
     directive: &OptionDirective,
     line: usize,
 ) -> Result<(), HttpClientError> {
@@ -261,6 +264,76 @@ fn apply_option(
                         content: "@fragments requires a path".to_string(),
                     })?;
             options.fragment_paths.push(path.to_string());
+        }
+        "expect-status" => {
+            let raw = directive
+                .value
+                .as_deref()
+                .ok_or_else(|| HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-status requires at least one status code".to_string(),
+                })?;
+            let mut codes = Vec::new();
+            for chunk in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+                let chunk = chunk.trim();
+                if chunk.is_empty() {
+                    continue;
+                }
+                let code = chunk
+                    .parse::<u16>()
+                    .map_err(|_| HttpClientError::InvalidOption {
+                        line,
+                        content: format!("@expect-status got non-integer code '{chunk}'"),
+                    })?;
+                codes.push(code);
+            }
+            if codes.is_empty() {
+                return Err(HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-status requires at least one status code".to_string(),
+                });
+            }
+            assertions.push(ResponseAssertion::Status { codes, line });
+        }
+        "expect-header" => {
+            let raw = directive
+                .value
+                .as_deref()
+                .ok_or_else(|| HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-header requires '<name> <substring>'".to_string(),
+                })?;
+            let (name, substring) = raw.split_once(char::is_whitespace).ok_or_else(|| {
+                HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-header requires '<name> <substring>'".to_string(),
+                }
+            })?;
+            assertions.push(ResponseAssertion::Header {
+                name: name.trim().to_string(),
+                substring: substring.trim().to_string(),
+                line,
+            });
+        }
+        "expect-json" => {
+            let raw = directive
+                .value
+                .as_deref()
+                .ok_or_else(|| HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-json requires '<pointer> <expected>'".to_string(),
+                })?;
+            let (pointer, expected) = raw.split_once(char::is_whitespace).ok_or_else(|| {
+                HttpClientError::InvalidOption {
+                    line,
+                    content: "@expect-json requires '<pointer> <expected>'".to_string(),
+                }
+            })?;
+            assertions.push(ResponseAssertion::JsonValue {
+                pointer: pointer.trim().to_string(),
+                expected: expected.trim().to_string(),
+                line,
+            });
         }
         _ => {
             // Unknown directives are ignored, mirroring JetBrains' forward-compatible behaviour.
@@ -450,6 +523,36 @@ Content-Type: application/json
         assert_eq!(options.timeout_ms, Some(1500));
         assert_eq!(options.connection_timeout_ms, Some(250));
         assert!(options.no_redirect);
+    }
+
+    #[test]
+    fn parses_response_assertions() {
+        let input = "### Endpoint\n# @expect-status 200,204\n# @expect-header content-type application/json\n# @expect-json /users/0/name Alice\nGET https://example.com/users\n";
+        let file = parse_request_file(input).unwrap();
+        let assertions = &file.requests[0].assertions;
+        assert_eq!(assertions.len(), 3);
+        match &assertions[0] {
+            ResponseAssertion::Status { codes, .. } => assert_eq!(codes, &[200, 204]),
+            other => panic!("unexpected: {other:?}"),
+        }
+        match &assertions[1] {
+            ResponseAssertion::Header {
+                name, substring, ..
+            } => {
+                assert_eq!(name, "content-type");
+                assert_eq!(substring, "application/json");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match &assertions[2] {
+            ResponseAssertion::JsonValue {
+                pointer, expected, ..
+            } => {
+                assert_eq!(pointer, "/users/0/name");
+                assert_eq!(expected, "Alice");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[test]
