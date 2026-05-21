@@ -13,7 +13,15 @@
 //! Request names default to `<index>: <METHOD> <path>` so the output of
 //! `zed-http list` against an imported file is still scannable. A
 //! caller-provided `--name-prefix` is prepended in CLI usage.
+//!
+//! Inputs are decoded by [`decode_har_input`], which sniffs the RFC 1952
+//! gzip magic bytes (`0x1f 0x8b`) and transparently decompresses a
+//! `.har.gz` archive before parsing — so browser exports can be imported
+//! either compressed or plain.
 
+use std::io::Read;
+
+use flate2::read::GzDecoder;
 use serde_json::Value;
 
 use crate::{
@@ -27,6 +35,25 @@ use crate::{
 /// no meaning in a replayed `.http` request. Filtering them out avoids
 /// confusing diagnostics from `reqwest` when the file is replayed.
 const HTTP2_PSEUDO_HEADERS: &[&str] = &[":authority", ":method", ":path", ":scheme", ":status"];
+
+/// RFC 1952 gzip magic bytes.
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Decode raw HAR bytes into the UTF-8 JSON string that [`import_har`]
+/// expects, transparently decompressing gzip-magic input. Used by the
+/// CLI before handing the text to the parser so `.har.gz` archives
+/// from browser devtools work without a separate `gunzip` step.
+pub fn decode_har_input(bytes: &[u8]) -> Result<String, HttpClientError> {
+    if bytes.len() >= 2 && bytes[..2] == GZIP_MAGIC {
+        let mut out = String::new();
+        GzDecoder::new(bytes)
+            .read_to_string(&mut out)
+            .map_err(|e| HttpClientError::Message(format!("HAR gzip decode error: {e}")))?;
+        return Ok(out);
+    }
+    String::from_utf8(bytes.to_vec())
+        .map_err(|e| HttpClientError::Message(format!("HAR input is not valid UTF-8: {e}")))
+}
 
 pub fn import_har(input: &str, name_prefix: Option<&str>) -> Result<RequestFile, HttpClientError> {
     let value: Value = serde_json::from_str(input)
@@ -160,10 +187,20 @@ fn path_for_label(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use flate2::{write::GzEncoder, Compression};
+
     use super::*;
 
     fn import(input: &str) -> RequestFile {
         import_har(input, None).unwrap()
+    }
+
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(bytes).expect("gzip write");
+        encoder.finish().expect("gzip finish")
     }
 
     #[test]
@@ -319,6 +356,65 @@ mod tests {
         let err = import_har("{\"log\":{}}", None).unwrap_err();
         match err {
             HttpClientError::Message(msg) => assert!(msg.contains("missing /log/entries")),
+            other => panic!("expected Message, got {other:?}"),
+        }
+    }
+
+    const MINIMAL_HAR: &str = r#"{
+        "log": { "version": "1.2", "entries": [
+            { "request": { "method": "GET", "url": "https://example.com/a", "headers": [] } }
+        ] }
+    }"#;
+
+    #[test]
+    fn decode_har_input_passes_through_plain_json() {
+        let decoded = decode_har_input(MINIMAL_HAR.as_bytes()).unwrap();
+        assert_eq!(decoded, MINIMAL_HAR);
+    }
+
+    #[test]
+    fn decode_har_input_decompresses_gzip() {
+        let compressed = gzip(MINIMAL_HAR.as_bytes());
+        assert_eq!(&compressed[..2], &GZIP_MAGIC);
+        let decoded = decode_har_input(&compressed).unwrap();
+        assert_eq!(decoded, MINIMAL_HAR);
+    }
+
+    #[test]
+    fn import_har_via_decode_handles_gzip_end_to_end() {
+        let compressed = gzip(MINIMAL_HAR.as_bytes());
+        let decoded = decode_har_input(&compressed).unwrap();
+        let from_gzip = import_har(&decoded, None).unwrap();
+        let from_plain = import(MINIMAL_HAR);
+        assert_eq!(from_gzip.requests.len(), 1);
+        assert_eq!(
+            from_gzip.requests[0].name, from_plain.requests[0].name,
+            "gzip round-trip should match plain import"
+        );
+        assert_eq!(from_gzip.requests[0].url, from_plain.requests[0].url);
+    }
+
+    #[test]
+    fn decode_har_input_rejects_invalid_gzip() {
+        // Gzip magic followed by garbage — decompressor should fail.
+        let mut bad = vec![0x1f, 0x8b];
+        bad.extend_from_slice(b"not really a gzip stream");
+        let err = decode_har_input(&bad).unwrap_err();
+        match err {
+            HttpClientError::Message(msg) => {
+                assert!(msg.contains("HAR gzip decode"), "got: {msg}")
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_har_input_rejects_non_utf8_plain() {
+        // No gzip magic, but invalid UTF-8 — should surface a UTF-8 error.
+        let bytes: Vec<u8> = vec![0xff, 0xfe, 0xfd];
+        let err = decode_har_input(&bytes).unwrap_err();
+        match err {
+            HttpClientError::Message(msg) => assert!(msg.contains("UTF-8"), "got: {msg}"),
             other => panic!("expected Message, got {other:?}"),
         }
     }

@@ -76,7 +76,7 @@ pub use graphql::{
     build_graphql_payload, introspection_payload, parse_variable_definitions, render_graphql_json,
     render_graphql_json_with_extras, validate_variables, VariableDefinition, INTROSPECTION_QUERY,
 };
-pub use har::import_har;
+pub use har::{decode_har_input, import_har};
 pub use interpolate::{interpolate_text, resolve_variables};
 pub use model::{
     CaptureDirective, CaptureSource, Header, InPlaceVariable, RequestBlock, RequestBody,

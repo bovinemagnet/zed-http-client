@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - Unreleased
+
+Quality-of-life follow-up to the 0.4.5 HAR importer. Browser exports
+saved with content compression (`.har.gz`) no longer need a manual
+`gunzip` pass — `zed-http import har` now sniffs the RFC 1952 gzip
+magic bytes and transparently decompresses the archive before parsing.
+Plain `.har` input is unchanged; detection is by magic bytes, not file
+extension.
+
+### Added
+
+- `zed-http-core::decode_har_input(&[u8]) -> Result<String, …>` — a
+  small helper that returns the UTF-8 HAR JSON for either a plain
+  archive or a gzip-magic-prefixed one. Re-exported from the crate
+  root so external consumers get the same behaviour.
+- The CLI's `import har` handler reads the file as bytes and routes
+  the result through `decode_har_input` before handing the string to
+  `import_har`; gzip decode failures and non-UTF-8 plain input are
+  surfaced as `HAR gzip decode error: …` and `HAR input is not valid
+  UTF-8: …` respectively, wrapped with the file path via
+  `anyhow::Context`.
+
+### Changed
+
+- `crates/zed-http-core/Cargo.toml` gains a `flate2` dependency with
+  `default-features = false` and the pure-Rust `rust_backend` feature
+  only, avoiding any link against zlib/`miniz` C code (which keeps
+  cross-compile targets like `aarch64-unknown-linux-gnu` happy — the
+  same reason the 0.4.7 release dropped native-tls).
+
+### Operational notes
+
+- The auto-decode is opt-out-impossible by design: any input whose
+  first two bytes match `0x1f 0x8b` is treated as gzip. A `.har` file
+  whose contents start with those bytes (vanishingly unlikely for
+  JSON) would be misinterpreted; the practical effect is zero.
+
 ## [0.4.7] - 2026-05-20
 
 Fixes the v0.4.6 release workflow. The 0.4.6 tag triggered the new

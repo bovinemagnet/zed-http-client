@@ -41,13 +41,13 @@ use reqwest::{header::CONTENT_TYPE, redirect::Policy, Method};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
-    build_preview, cookie_jar_path, evaluate_assertions, evaluate_captures, format_pretty_response,
-    format_request_file, import_curl, import_har, import_postman_collection, introspection_payload,
-    list_environments, load_cached_schema, mask_variables, parse_request_file, prepare_request,
-    prepare_request_with_extras, response_root, save_response, schema_root, schema_slug,
-    validate_request_file_with_schemas, validate_request_with_schema, AssertionResponse,
-    CaptureWarning, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
-    ValidationIssue,
+    build_preview, cookie_jar_path, decode_har_input, evaluate_assertions, evaluate_captures,
+    format_pretty_response, format_request_file, import_curl, import_har,
+    import_postman_collection, introspection_payload, list_environments, load_cached_schema,
+    mask_variables, parse_request_file, prepare_request, prepare_request_with_extras,
+    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
+    validate_request_with_schema, AssertionResponse, CaptureWarning, RequestMethod,
+    RequestSelector, ResolvedRequest, ResponseSummary, ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -463,8 +463,10 @@ fn import_command(command: ImportCommand) -> Result<()> {
             out,
             name_prefix,
         } => {
-            let raw = fs::read_to_string(&file)
-                .with_context(|| format!("failed to read {}", file.display()))?;
+            let bytes =
+                fs::read(&file).with_context(|| format!("failed to read {}", file.display()))?;
+            let raw = decode_har_input(&bytes)
+                .with_context(|| format!("failed to decode {}", file.display()))?;
             let request_file = import_har(&raw, name_prefix.as_deref())
                 .with_context(|| format!("failed to import {}", file.display()))?;
             let rendered = format_request_file(&request_file);

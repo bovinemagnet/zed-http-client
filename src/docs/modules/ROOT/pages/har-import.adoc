@@ -30,7 +30,7 @@ zed-http import har --file <path>
 ----
 
 `--file <path>` is required.
-HAR archives are too large for inline command-line arguments and there is no `--stdin` mode in v0.4.5.
+HAR archives are too large for inline command-line arguments and there is no `--stdin` mode.
 
 The file must be a valid HAR 1.2 JSON document — the top-level shape is `{ "log": { "entries": [ ... ] } }`.
 If the file cannot be parsed as JSON, or if the `/log/entries` array is absent, the command exits with a diagnostic message:
@@ -42,13 +42,12 @@ HAR file missing /log/entries — is this a valid HAR 1.2 archive?
 
 [NOTE]
 ====
-Gzipped HAR (`.har.gz`) is not auto-decoded in v0.4.5.
-Decompress the file first, then import:
+Gzipped archives are auto-detected by the RFC 1952 magic bytes (`0x1f 0x8b`), not the file extension.
+Pass a `.har.gz` file directly:
 
 [source,bash]
 ----
-gunzip session.har.gz
-zed-http import har --file session.har --out session.http
+zed-http import har --file session.har.gz --out session.http
 ----
 ====
 
@@ -153,11 +152,6 @@ When `postData.mimeType` starts with `multipart/`, the body is dropped and a not
 
 The import itself succeeds; only the body content is absent.
 Full multipart rendering is deferred — see xref:roadmap.adoc[Roadmap and limitations] for the current status.
-
-=== Gzipped HAR
-
-`.har.gz` files are not automatically decompressed.
-Pipe through `gunzip` before importing (see xref:#input[Input]).
 
 == Worked example
 
