@@ -73,6 +73,8 @@ The archives are produced by the project's release workflow (`.github/workflows/
 
 === Install to `~/.cargo/bin`
 
+NOTE: Building from source requires Rust 1.74 or newer (the minimum supported Rust version, driven by the `clap` 4 dependency).
+
 [source,bash]
 ----
 cargo install --path crates/zed-http-cli
