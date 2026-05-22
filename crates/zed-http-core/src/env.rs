@@ -229,4 +229,54 @@ mod tests {
             "https://example.com"
         );
     }
+
+    #[test]
+    fn returns_empty_map_when_no_env_name_requested() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+
+        let values = load_environment(&request_file, Some(&dir), None).unwrap();
+
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn returns_empty_map_when_no_env_files_exist() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+
+        let values = load_environment(&request_file, Some(&dir), Some("dev")).unwrap();
+
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn malformed_env_file_is_reported_as_an_error() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+        fs::write(dir.join("http-client.env.json"), "{ not valid json").unwrap();
+
+        let result = load_environment(&request_file, Some(&dir), Some("dev"));
+
+        assert!(matches!(result, Err(HttpClientError::Json(_))));
+    }
+
+    #[test]
+    fn unknown_env_name_yields_no_values() {
+        let dir = temp_dir();
+        let request_file = dir.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+        fs::write(
+            dir.join("http-client.env.json"),
+            r#"{ "dev": { "host": "https://dev.example.com" } }"#,
+        )
+        .unwrap();
+
+        let values = load_environment(&request_file, Some(&dir), Some("prod")).unwrap();
+
+        assert!(values.is_empty());
+    }
 }

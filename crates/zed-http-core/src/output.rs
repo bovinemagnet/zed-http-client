@@ -149,3 +149,128 @@ fn is_json(content_type: Option<&str>, body: &str) -> bool {
         .unwrap_or(false)
         || serde_json::from_str::<serde_json::Value>(body).is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("zed-http-client-output-test-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn slugify_lowercases_and_collapses_non_alphanumerics() {
+        assert_eq!(slugify("List Users"), "list-users");
+        assert_eq!(slugify("GraphQL  user   query"), "graphql-user-query");
+    }
+
+    #[test]
+    fn slugify_trims_leading_and_trailing_separators() {
+        assert_eq!(slugify("  ### Health check!! "), "health-check");
+    }
+
+    #[test]
+    fn slugify_falls_back_to_response_when_empty() {
+        assert_eq!(slugify(""), "response");
+        assert_eq!(slugify("!!! ???"), "response");
+    }
+
+    #[test]
+    fn content_type_extension_maps_known_types_and_ignores_charset() {
+        assert_eq!(
+            content_type_to_extension(Some("application/json; charset=utf-8")),
+            ".json"
+        );
+        assert_eq!(content_type_to_extension(Some("text/html")), ".html");
+        assert_eq!(content_type_to_extension(Some("text/plain")), ".txt");
+        assert_eq!(
+            content_type_to_extension(Some("application/graphql")),
+            ".graphql"
+        );
+    }
+
+    #[test]
+    fn content_type_extension_defaults_to_body_for_unknown_or_missing() {
+        assert_eq!(content_type_to_extension(Some("image/png")), ".body");
+        assert_eq!(content_type_to_extension(None), ".body");
+    }
+
+    #[test]
+    fn is_json_detects_by_content_type_and_by_sniffing_the_body() {
+        assert!(is_json(Some("application/json"), "not json"));
+        assert!(is_json(None, r#"{"ok":true}"#));
+        assert!(!is_json(Some("text/plain"), "plain body"));
+    }
+
+    #[test]
+    fn build_preview_pretty_prints_json_bodies() {
+        let preview = build_preview(Some("application/json"), r#"{"b":2,"a":1}"#);
+        assert!(preview.contains("\n  \"b\": 2"));
+    }
+
+    #[test]
+    fn build_preview_truncates_long_non_json_bodies() {
+        let body = "x".repeat(5000);
+        let preview = build_preview(Some("text/plain"), &body);
+        assert!(preview.ends_with('…'));
+        assert_eq!(preview.chars().count(), 2002); // 2000 chars + newline + ellipsis
+    }
+
+    #[test]
+    fn build_preview_leaves_short_bodies_untouched() {
+        assert_eq!(build_preview(Some("text/plain"), "short"), "short");
+    }
+
+    #[test]
+    fn save_response_writes_a_timestamped_slugged_file() {
+        let dir = temp_dir().join("responses");
+        let path = save_response(
+            &dir,
+            Some("List Users"),
+            &RequestMethod::Get,
+            Some("application/json; charset=utf-8"),
+            r#"{"ok":true}"#,
+        )
+        .unwrap();
+
+        assert!(path.exists());
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.ends_with("-list-users.json"), "got {name}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn save_response_falls_back_to_method_when_unnamed() {
+        let dir = temp_dir().join("responses");
+        let path = save_response(&dir, None, &RequestMethod::Delete, None, "").unwrap();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.ends_with("-delete.body"), "got {name}");
+    }
+
+    #[test]
+    fn artifact_dirs_prefer_worktree_root_over_file_parent() {
+        let http_file = Path::new("/project/api/requests.http");
+        let worktree = Path::new("/project");
+
+        assert_eq!(
+            response_root(http_file, Some(worktree)),
+            Path::new("/project/.zed-http/responses")
+        );
+        assert_eq!(
+            schema_root(http_file, None),
+            Path::new("/project/api/.zed-http/schema")
+        );
+        assert_eq!(
+            cookie_jar_path(http_file, Some(worktree)),
+            Path::new("/project/.zed-http/cookies.json")
+        );
+    }
+}
