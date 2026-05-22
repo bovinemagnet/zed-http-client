@@ -230,10 +230,56 @@ enum OutputMode {
     Raw,
 }
 
+/// Response assertions (`# @expect-*`) failed, or a `run-all` request
+/// returned a non-2xx status. Surfaced as process exit code 2 so CI can
+/// tell "the requests ran but failed their checks" from a generic error.
+#[derive(Debug)]
+struct TestFailure(String);
+
+impl std::fmt::Display for TestFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TestFailure {}
+
+/// Pre-flight validation rejected the request file before anything was
+/// sent. Surfaced as process exit code 3.
+#[derive(Debug)]
+struct ValidationFailure(String);
+
+impl std::fmt::Display for ValidationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ValidationFailure {}
+
+/// Map a top-level failure to a process exit code: 2 for test failures,
+/// 3 for validation failures, 1 for everything else.
+fn exit_code_for(err: &anyhow::Error) -> i32 {
+    if err.downcast_ref::<TestFailure>().is_some() {
+        2
+    } else if err.downcast_ref::<ValidationFailure>().is_some() {
+        3
+    } else {
+        1
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
-    match cli.command {
+    if let Err(err) = dispatch(cli.command).await {
+        eprintln!("Error: {err:#}");
+        std::process::exit(exit_code_for(&err));
+    }
+}
+
+async fn dispatch(command: Commands) -> Result<()> {
+    match command {
         Commands::Run {
             file,
             line,
@@ -351,33 +397,7 @@ fn check_command(file: &Path, env: Option<&str>, worktree: Option<&Path>) -> Res
     let parsed = parse_request_file(&contents)
         .with_context(|| format!("failed to parse {}", file.display()))?;
 
-    let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
-    for request in &parsed.requests {
-        // Try the resolver first (honours --env and any `# @env` directive). If
-        // it fails (e.g. missing variable), fall back to the raw URL when
-        // there's no interpolation left to do.
-        let resolved_url = prepare_request(
-            file,
-            &contents,
-            RequestSelector::Line(request.range.start_line),
-            env,
-            worktree,
-        )
-        .ok()
-        .map(|resolved| resolved.url)
-        .or_else(|| {
-            if !request.url.contains("{{") {
-                Some(request.url.clone())
-            } else {
-                None
-            }
-        });
-        schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
-    }
-
-    let issues = validate_request_file_with_schemas(&parsed, |idx, _| {
-        schemas.get(idx).and_then(|slot| slot.clone())
-    });
+    let issues = validate_whole_file(file, &contents, &parsed, env, worktree);
 
     if issues.is_empty() {
         println!(
@@ -388,7 +408,7 @@ fn check_command(file: &Path, env: Option<&str>, worktree: Option<&Path>) -> Res
         return Ok(());
     }
     print_issues(file, &issues);
-    anyhow::bail!("{} validation issue(s) found", issues.len());
+    Err(ValidationFailure(format!("{} validation issue(s) found", issues.len())).into())
 }
 
 fn schema_command(command: SchemaCommand) -> Result<()> {
@@ -614,6 +634,43 @@ fn print_issues(file: &Path, issues: &[ValidationIssue]) {
             issue.message
         );
     }
+}
+
+/// Validate every request in a parsed file, schema-aware where a cached
+/// schema can be found. Each URL is resolved first so `load_cached_schema`
+/// has something to match on; resolution degrades silently when env
+/// interpolation can't produce a URL (same rule for `check` and `run-all`).
+fn validate_whole_file(
+    file: &Path,
+    contents: &str,
+    parsed: &zed_http_core::RequestFile,
+    env: Option<&str>,
+    worktree: Option<&Path>,
+) -> Vec<ValidationIssue> {
+    let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
+    for request in &parsed.requests {
+        let resolved_url = prepare_request(
+            file,
+            contents,
+            RequestSelector::Line(request.range.start_line),
+            env,
+            worktree,
+        )
+        .ok()
+        .map(|resolved| resolved.url)
+        .or_else(|| {
+            if !request.url.contains("{{") {
+                Some(request.url.clone())
+            } else {
+                None
+            }
+        });
+        schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
+    }
+
+    validate_request_file_with_schemas(parsed, |idx, _| {
+        schemas.get(idx).and_then(|slot| slot.clone())
+    })
 }
 
 fn select_block_for_validation<'a>(
@@ -852,9 +909,11 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
         let issues = validate_request_with_schema(selected, schema.as_ref());
         if !issues.is_empty() {
             print_issues(file, &issues);
-            anyhow::bail!(
+            return Err(ValidationFailure(
                 "request failed validation; re-run with --no-validate to skip these checks"
-            );
+                    .to_string(),
+            )
+            .into());
         }
     }
 
@@ -970,10 +1029,11 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
     }
 
     if !outcome.assertion_failures.is_empty() {
-        anyhow::bail!(
+        return Err(TestFailure(format!(
             "{} response assertion(s) failed",
             outcome.assertion_failures.len()
-        );
+        ))
+        .into());
     }
 
     Ok(())
@@ -1031,32 +1091,13 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
         // Whole-file validation up front. Schema-aware checks need a
         // resolvable URL, so they degrade silently when env interpolation
         // can't produce one (same rules as `check`).
-        let mut schemas: Vec<Option<serde_json::Value>> = Vec::with_capacity(parsed.requests.len());
-        for request in &parsed.requests {
-            let resolved_url = prepare_request(
-                file,
-                &contents,
-                RequestSelector::Line(request.range.start_line),
-                env,
-                worktree,
-            )
-            .ok()
-            .map(|r| r.url)
-            .or_else(|| {
-                if !request.url.contains("{{") {
-                    Some(request.url.clone())
-                } else {
-                    None
-                }
-            });
-            schemas.push(resolved_url.and_then(|url| load_cached_schema(file, worktree, &url)));
-        }
-        let issues = validate_request_file_with_schemas(&parsed, |idx, _| {
-            schemas.get(idx).and_then(|slot| slot.clone())
-        });
+        let issues = validate_whole_file(file, &contents, &parsed, env, worktree);
         if !issues.is_empty() {
             print_issues(file, &issues);
-            anyhow::bail!("validation failed; re-run with --no-validate to skip these checks");
+            return Err(ValidationFailure(
+                "validation failed; re-run with --no-validate to skip these checks".to_string(),
+            )
+            .into());
         }
     }
 
@@ -1285,7 +1326,7 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
     }
 
     if failed > 0 || bailed_at.is_some() {
-        anyhow::bail!("{} request(s) failed", failed);
+        return Err(TestFailure(format!("{failed} request(s) failed")).into());
     }
 
     Ok(())

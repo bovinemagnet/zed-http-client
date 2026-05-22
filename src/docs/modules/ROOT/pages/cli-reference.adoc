@@ -26,6 +26,27 @@ zed-http <subcommand> --help
 * xref:#import[import] — translate a Postman v2.1 collection, a curl command, or a HAR archive into a `.http` file
 * xref:#completions[completions] — emit a shell completion script for bash, zsh, fish, powershell, or elvish
 
+== Exit codes
+
+All subcommands use the following shared exit code scheme:
+
+[cols="1,4", options="header"]
+|===
+|Code |Meaning
+
+|`0`
+|Success.
+
+|`1`
+|Generic error — network or TLS failure, a file that cannot be read or parsed, a malformed `--var` argument, `format --check` finding a non-canonical file, etc.
+
+|`2`
+|Test failure — one or more `# @expect-*` response assertions failed (`run`), or one or more requests in a `run-all` invocation failed (HTTP status ≥ 400, a failed assertion, or a request that errored).
+
+|`3`
+|Validation failure — pre-flight validation rejected the request file before anything was sent (`run`, `run-all`, and `check`).
+|===
+
 ---
 
 [[run]]
@@ -152,11 +173,22 @@ See xref:captures.adoc[] for the full reference.
 
 === Exit codes
 
-Non-zero exit is produced when:
+[cols="1,4", options="header"]
+|===
+|Code |Condition
 
-* Pre-flight validation fails (unless `--no-validate`).
-* The HTTP request itself fails (network error, TLS error).
-* One or more `# @expect-*` assertions are not satisfied.
+|`3`
+|Pre-flight validation failed (unless `--no-validate`).
+
+|`1`
+|The HTTP request itself failed (network error, TLS error).
+
+|`2`
+|One or more `# @expect-*` assertions were not satisfied.
+
+|`0`
+|The request completed and all assertions passed.
+|===
 
 === Example
 
@@ -318,13 +350,19 @@ Useful for post-processing with `awk`, `grep`, or a CI log parser.
 
 === Exit codes
 
-`run-all` exits non-zero when:
+[cols="1,4", options="header"]
+|===
+|Code |Condition
 
-* Pre-flight validation fails (unless `--no-validate`).
-* Any request in the file fails (HTTP error status ≥ 400, or a `# @expect-*` assertion is not satisfied).
-* `--bail` is triggered (even if only one request failed before stopping).
+|`3`
+|Pre-flight validation failed (unless `--no-validate`).
 
-Exit `0` only when every request passes.
+|`2`
+|Any request in the file failed (HTTP status ≥ 400, a failed assertion, or a request that errored), or `--bail` was triggered.
+
+|`0`
+|Every request passed.
+|===
 
 === Example
 
@@ -391,8 +429,16 @@ See xref:directives.adoc[Directives reference] for a description of what the val
 
 === Exit codes
 
-Exits `1` when at least one validation issue is found.
-Exits `0` and prints a summary when all requests pass.
+[cols="1,4", options="header"]
+|===
+|Code |Condition
+
+|`3`
+|At least one validation issue was found.
+
+|`0`
+|All requests passed; a summary is printed.
+|===
 
 === Example
 
