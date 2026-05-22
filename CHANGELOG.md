@@ -5,41 +5,80 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.8] - Unreleased
+## [0.4.8] - 2026-05-22
 
-Quality-of-life follow-up to the 0.4.5 HAR importer. Browser exports
-saved with content compression (`.har.gz`) no longer need a manual
-`gunzip` pass — `zed-http import har` now sniffs the RFC 1952 gzip
-magic bytes and transparently decompresses the archive before parsing.
-Plain `.har` input is unchanged; detection is by magic bytes, not file
-extension.
+Consolidates the improvements made since 0.4.7. The headline change is
+user-visible: the `zed-http` CLI now returns distinct process exit
+codes so CI can tell a failed test run from a malformed file. HAR
+archives are auto-decompressed, a minimum supported Rust version is
+declared, internal test coverage is substantially expanded, and the
+Tree-sitter grammar is no longer vendored into this repository.
 
 ### Added
 
+- **Distinct process exit codes.** The CLI previously exited `1` for
+  every failure. It now exits `2` for a test failure (a failed
+  `# @expect-*` assertion in `run`, or any failed request in
+  `run-all`), `3` for a pre-flight validation failure (`run`,
+  `run-all`, and `check`), and `1` for generic errors (network/TLS
+  failure, an unreadable or unparseable file, a malformed `--var`, a
+  `format --check` mismatch). `0` still means success. The scheme is
+  documented in the CLI reference.
 - `zed-http-core::decode_har_input(&[u8]) -> Result<String, …>` — a
   small helper that returns the UTF-8 HAR JSON for either a plain
   archive or a gzip-magic-prefixed one. Re-exported from the crate
   root so external consumers get the same behaviour.
 - The CLI's `import har` handler reads the file as bytes and routes
   the result through `decode_har_input` before handing the string to
-  `import_har`; gzip decode failures and non-UTF-8 plain input are
-  surfaced as `HAR gzip decode error: …` and `HAR input is not valid
-  UTF-8: …` respectively, wrapped with the file path via
+  `import_har`; compressed `.har.gz` browser exports no longer need a
+  manual `gunzip` pass. Gzip decode failures and non-UTF-8 plain input
+  are surfaced as `HAR gzip decode error: …` and `HAR input is not
+  valid UTF-8: …` respectively, wrapped with the file path via
   `anyhow::Context`.
+- A black-box CLI integration test suite (`crates/zed-http-cli/tests/
+  cli.rs`) that drives the compiled binary over `list`, `envs`,
+  `format`, `check`, `import`, `completions`, and the new exit codes,
+  with no new dev-dependency.
+- Unit tests for the previously untested `output` and `env` core
+  modules — response persistence, slug and content-type-to-extension
+  mapping, preview building, and env-file discovery including
+  malformed and absent input.
+- `rust-version = "1.74"` declared in both crate manifests, recording
+  the minimum supported Rust version (the floor imposed by `clap` 4).
+  Noted in the installation guide and README.
 
 ### Changed
 
+- The Tree-sitter grammar is no longer vendored under `grammars/` in
+  this repository. It lives solely in its own repository,
+  <https://github.com/bovinemagnet/tree-sitter-http-request>, which
+  Zed clones at the SHA pinned in `extension.toml`. The in-tree copy
+  was a manually-synced duplicate that nothing here built or consumed.
+- The whole-file validation loop shared by `check` and `run-all` is
+  extracted into a single internal helper, removing a block of
+  duplicated schema-resolution logic.
 - `crates/zed-http-core/Cargo.toml` gains a `flate2` dependency with
   `default-features = false` and the pure-Rust `rust_backend` feature
   only, avoiding any link against zlib/`miniz` C code (which keeps
   cross-compile targets like `aarch64-unknown-linux-gnu` happy — the
   same reason the 0.4.7 release dropped native-tls).
 
+### Fixed
+
+- The release workflow now creates the GitHub Release before the
+  build matrix uploads its artefacts, so the first uploading job no
+  longer races a not-yet-created release.
+
 ### Operational notes
 
-- The auto-decode is opt-out-impossible by design: any input whose
-  first two bytes match `0x1f 0x8b` is treated as gzip. A `.har` file
-  whose contents start with those bytes (vanishingly unlikely for
+- The exit-code change is backward-compatible for the common
+  "non-zero means failure" check, but any script that branched
+  specifically on exit code `1` will now see `2` or `3` for assertion
+  and validation failures — `check`, in particular, exits `3` (was
+  `1`) when it finds validation issues.
+- The HAR auto-decode is opt-out-impossible by design: any input
+  whose first two bytes match `0x1f 0x8b` is treated as gzip. A `.har`
+  file whose contents start with those bytes (vanishingly unlikely for
   JSON) would be misinterpreted; the practical effect is zero.
 
 ## [0.4.7] - 2026-05-20
