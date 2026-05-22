@@ -165,15 +165,13 @@ zed-http-client/
     zed-http-core/            parser, env, executor, validators, formatter
   languages/
     http-request/             Zed language config + queries
-  grammars/
-    tree-sitter-http-request/ in-tree mirror of the published grammar
   snippets/
     http-request.json         Zed snippets
   examples/                   sample request and env files
   src/docs/                   Antora documentation source
 ----
 
-The Tree-sitter grammar is mirrored from https://github.com/bovinemagnet/tree-sitter-http-request[bovinemagnet/tree-sitter-http-request]; the SHA in `extension.toml` pins exactly what Zed clones at install time.
+The Tree-sitter grammar lives in its own repository, https://github.com/bovinemagnet/tree-sitter-http-request[bovinemagnet/tree-sitter-http-request]; the SHA in `extension.toml` pins exactly what Zed clones at install time.
 
 == Zed integration in one paragraph
 

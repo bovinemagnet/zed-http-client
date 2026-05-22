@@ -229,17 +229,18 @@ To resolve conflicts:
 
 If you must keep both extensions installed, check Zed's extension settings (`zed: extensions`) to see which extension is listed first.
 
-== Editing the grammar locally
+== Editing the grammar
 
 The Tree-sitter grammar lives in a separate repository at {grammar-repo}.
-This repository keeps a local mirror at `grammars/tree-sitter-http-request/` for convenient editing, but Zed always clones from the published repository at the SHA pinned in `extension.toml`.
+Zed clones it at the commit SHA pinned in `extension.toml`.
 
 To propose a grammar change:
 
-. Edit `grammar.js` in your local `grammars/tree-sitter-http-request/` copy.
+. Clone the grammar repository ({grammar-repo}) if you have not already.
+. Edit `grammar.js` there.
 . Run `npx tree-sitter generate` to regenerate `src/parser.c`.
-. Push the change to the grammar repository.
-. Copy the resulting commit SHA into the `rev` field under `[grammars.http_request]` in `extension.toml`.
+. Commit and push the change; tag it with the next `0.x` version.
+. Copy the new commit SHA into the `rev` field under `[grammars.http_request]` in `extension.toml`.
 . Reinstall the dev extension in Zed to pick up the new grammar.
 
 For more detail on what the CLI accepts in the request files, see xref:http-file-syntax.adoc[Request file syntax], xref:directives.adoc[Directives reference], and xref:environments.adoc[Environments and variables].

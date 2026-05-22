@@ -1,9 +1,0 @@
-(request_separator) @punctuation.special
-(request_name) @title
-(method) @keyword
-(url) @string.special.url
-(comment) @comment
-(identifier) @variable
-(interpolation) @variable.special
-(header_name) @property
-(header_value) @string

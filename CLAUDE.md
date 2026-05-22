@@ -62,7 +62,7 @@ Secret masking (`env::mask_value`) is a pure presentation concern used only by `
 ## Zed extension side
 
 - `extension.toml` declares the extension and pins the Tree-sitter grammar by commit SHA (`rev` field — update it when bumping the grammar).
-- `grammars/tree-sitter-http-request/grammar.js` is the in-repo grammar source mirrored to a separate published repo; the Zed extension fetches it from there, not from this directory.
+- The Tree-sitter grammar lives only in its own repository, https://github.com/bovinemagnet/tree-sitter-http-request — this repo keeps no copy. Zed clones it at the pinned `rev` at install time. Grammar changes are made, committed, and tagged there, then the new SHA is copied into `extension.toml`.
 - `languages/http-request/` holds Zed's view: `config.toml` (file suffixes `http`, `rest`), `highlights.scm`, `injections.scm`, and `runnables.scm`. The `runnables.scm` tag `http-client-request` is what Zed matches against the `tags` field in `tasks.json` — keep them in sync if renaming.
 
 ## Conventions

@@ -64,19 +64,16 @@ zed-http-client/
     zed-http-core/                <4>
   languages/
     http-request/                 <5>
-  grammars/
-    tree-sitter-http-request/     <6>
-  examples/                       <7>
-  src/docs/                       <8>
+  examples/                       <6>
+  src/docs/                       <7>
 ----
 <1> Zed extension manifest; pins the Tree-sitter grammar SHA.
 <2> Ready-to-copy Zed task definitions; copy to `.zed/tasks.json` in your project.
 <3> The `zed-http` binary crate.
 <4> The parsing, interpolation, validation, and HTTP execution library.
 <5> Zed language configuration: file-type associations, highlight queries, injection queries, and the snippets file.
-<6> Local mirror of the published `tree-sitter-http-request` grammar (pinned via SHA in `extension.toml`).
-<7> Example `.http` file and environment JSON used throughout this documentation.
-<8> This documentation (Antora component, ROOT module).
+<6> Example `.http` file and environment JSON used throughout this documentation.
+<7> This documentation (Antora component, ROOT module).
 
 == Status
 
