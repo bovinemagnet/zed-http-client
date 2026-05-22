@@ -1,5 +1,10 @@
 # Initial PRD Overview
 
+> **Historical planning document.** This is the original plan for
+> `zed-http-client`, kept as a record of intent. It does not track changes
+> made after the initial build — see `README.adoc` and `src/docs/` for
+> current behaviour.
+
 This is feasible, but I would **not** try to build it as a “pure Zed UI plugin” first. The current Zed extension surface is strongest for **language support, Tree-sitter syntax/runnables, language servers, debuggers, snippets, themes, MCP/agent integrations**, not full arbitrary IntelliJ-style tool windows. Zed tasks already run commands and show output through the integrated terminal, and task variables expose the current file, line, column, selection, language, and worktree. That gives you a solid path for “run request under cursor” with an output panel-like experience. ([Zed][1])
 
 My recommended architecture is:

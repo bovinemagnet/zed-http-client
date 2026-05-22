@@ -1,5 +1,10 @@
 # Build an initial Zed HTTP + GraphQL Client extension repository
 
+> **Historical planning document.** This is the original plan for
+> `zed-http-client`, kept as a record of intent. It does not track changes
+> made after the initial build — see `README.adoc` and `src/docs/` for
+> current behaviour.
+
 Create an initial repository for a Zed editor extension named **zed-http-client**.
 
 The goal is to build a Zed extension that supports IntelliJ HTTP Client-style `.http` / `.rest` files and allows users to run HTTP and GraphQL requests from inside Zed.
@@ -59,14 +64,6 @@ zed-http-client/
       highlights.scm
       injections.scm
       runnables.scm
-
-  grammars/
-    tree-sitter-http-request/
-      README.md
-      grammar.js
-      package.json
-      queries/
-        highlights.scm
 
   examples/
     requests.http
@@ -531,7 +528,7 @@ Create `languages/http-request/injections.scm` to inject GraphQL and JSON bodies
 
 ## Tree-sitter grammar
 
-Create a minimal Tree-sitter grammar in `grammars/tree-sitter-http-request`.
+Create a minimal Tree-sitter grammar in its own repository, `bovinemagnet/tree-sitter-http-request` — it is not vendored into this repo; Zed clones it at the SHA pinned in `extension.toml`.
 
 It should identify:
 
