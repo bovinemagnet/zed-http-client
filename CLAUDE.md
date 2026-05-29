@@ -63,11 +63,12 @@ Secret masking (`env::mask_value`) is a pure presentation concern used only by `
 
 - `extension.toml` declares the extension and pins the Tree-sitter grammar by commit SHA (`rev` field — update it when bumping the grammar).
 - The Tree-sitter grammar lives only in its own repository, https://github.com/bovinemagnet/tree-sitter-http-request — this repo keeps no copy. Zed clones it at the pinned `rev` at install time. Grammar changes are made, committed, and tagged there, then the new SHA is copied into `extension.toml`.
-- `languages/http-request/` holds Zed's view: `config.toml` (file suffixes `http`, `rest`), `highlights.scm`, `injections.scm`, and `runnables.scm`. The `runnables.scm` tag `http-client-request` is what Zed matches against the `tags` field in `tasks.json` — keep them in sync if renaming.
+- `languages/http-request/` holds Zed's view: `config.toml` (file suffixes `http`, `rest`), `highlights.scm`, and `runnables.scm`. The `runnables.scm` tag `http-client-request` is what Zed matches against the `tags` field in `tasks.json` — keep them in sync if renaming.
 
 ## Conventions
 
-- Workspace edition is `2021`. Both crate versions are `0.1.0`. `Cargo.lock` is committed.
+- Workspace edition is `2021`; MSRV is `1.74` (declared via `rust-version` in each crate and verified by the `msrv` CI job). The two crate versions move in lockstep with the extension version in `extension.toml` — bump them together. `Cargo.lock` is committed.
 - Tests use `std::env::temp_dir().join(format!("...{nanos}"))` for isolation rather than the `tempfile` crate — follow that pattern when adding fixtures that touch the filesystem.
 - Line numbers throughout the parser and selectors are **1-based** (matching `$ZED_ROW`); ranges are inclusive on both ends.
 - The CLI's `--column` flag is accepted but currently unused — preserve it in the interface so Zed tasks don't break.
+- Filesystem paths in request files — `< ./body` bodies, `# @fragments`, and `>>`/`>>!` response redirects — are resolved relative to the `.http` file's directory (absolute paths are used verbatim). They trust developer-authored input and are deliberately **not** sandboxed against `..` traversal, matching IntelliJ's HTTP Client.

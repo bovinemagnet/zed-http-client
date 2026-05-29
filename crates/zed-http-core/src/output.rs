@@ -61,7 +61,17 @@ pub fn save_response(
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
     let slug = slugify(request_name.unwrap_or(method.as_str()));
     let extension = content_type_to_extension(content_type);
-    let file_path = base_dir.join(format!("{timestamp}-{slug}{extension}"));
+    let stem = format!("{timestamp}-{slug}");
+    // The timestamp is second-granular, so several requests in the same
+    // second (common with `run-all`) would otherwise produce the same name
+    // and silently clobber each other. Append a counter until the name is
+    // free so earlier responses survive.
+    let mut file_path = base_dir.join(format!("{stem}{extension}"));
+    let mut counter = 1;
+    while file_path.exists() {
+        file_path = base_dir.join(format!("{stem}-{counter}{extension}"));
+        counter += 1;
+    }
     fs::write(&file_path, body)?;
     Ok(file_path)
 }
@@ -245,6 +255,32 @@ mod tests {
         let name = path.file_name().unwrap().to_string_lossy();
         assert!(name.ends_with("-list-users.json"), "got {name}");
         assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn save_response_disambiguates_collisions_within_one_second() {
+        let dir = temp_dir().join("responses");
+
+        let first = save_response(
+            &dir,
+            Some("Ping"),
+            &RequestMethod::Get,
+            Some("application/json"),
+            "{}",
+        )
+        .unwrap();
+        let second = save_response(
+            &dir,
+            Some("Ping"),
+            &RequestMethod::Get,
+            Some("application/json"),
+            "{}",
+        )
+        .unwrap();
+
+        assert_ne!(first, second, "second save must not reuse the first path");
+        assert!(first.exists());
+        assert!(second.exists());
     }
 
     #[test]

@@ -741,7 +741,9 @@ async fn introspect_command(
         );
     }
 
-    let client = reqwest::Client::new();
+    // Honour @timeout / @connection-timeout / @no-redirect just like `run`;
+    // introspection needs no cookie jar.
+    let client = build_client(&resolved, None)?;
     let mut request = client.post(&resolved.url);
     for (header_name, header_value) in &resolved.headers {
         if header_name.eq_ignore_ascii_case("content-type")
@@ -1450,9 +1452,21 @@ fn load_cookie_jar(path: &Path) -> Arc<CookieStoreMutex> {
         match fs::File::open(path) {
             Ok(file) => {
                 let reader = std::io::BufReader::new(file);
-                cookie_store::serde::json::load(reader).unwrap_or_default()
+                cookie_store::serde::json::load(reader).unwrap_or_else(|err| {
+                    eprintln!(
+                        "warning: cookie jar {} is unreadable ({err}); starting with an empty jar",
+                        path.display()
+                    );
+                    CookieStore::default()
+                })
             }
-            Err(_) => CookieStore::default(),
+            Err(err) => {
+                eprintln!(
+                    "warning: cannot open cookie jar {} ({err}); starting with an empty jar",
+                    path.display()
+                );
+                CookieStore::default()
+            }
         }
     } else {
         CookieStore::default()

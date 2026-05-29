@@ -2,14 +2,19 @@
 //!
 //! Each test shells out to the compiled binary via the `CARGO_BIN_EXE_*`
 //! env var Cargo sets for integration tests, so no extra dev-dependency is
-//! needed. Only offline subcommands are exercised here — anything that
-//! sends a request (`run`, `run-all`, `introspect`) needs a server and is
-//! covered by the core crate's unit tests instead.
+//! needed. Most subcommands exercised here are offline; request-sending
+//! commands (`run`, `run-all`, `introspect`) are otherwise covered by the
+//! core crate's unit tests. The one exception is the exit-code-2 test below,
+//! which drives `run` against a std-only one-shot localhost server so the
+//! CI-integration exit code is pinned end to end.
 
 use std::{
     fs,
+    io::{Read, Write},
+    net::TcpListener,
     path::PathBuf,
     process::{Command, Output},
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -36,6 +41,31 @@ fn run(args: &[&str]) -> Output {
 
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Spawn a one-shot localhost HTTP server that answers the next connection
+/// with `status_line` (e.g. `"HTTP/1.1 200 OK"`) and a JSON `body`, then
+/// exits. Std-only, so the no-extra-dev-dependency rule above still holds.
+fn spawn_one_shot(
+    status_line: &'static str,
+    body: &'static str,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+    let addr = listener.local_addr().expect("mock server addr");
+    let url = format!("http://{addr}/");
+    let handle = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf); // drain the request headers
+            let response = format!(
+                "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (url, handle)
 }
 
 #[test]
@@ -150,6 +180,30 @@ fn import_curl_emits_a_request_block() {
 
     assert!(output.status.success());
     assert!(stdout(&output).contains("GET https://example.com/api"));
+}
+
+#[test]
+fn run_exits_2_when_an_assertion_fails() {
+    // The server answers 200 but the request asserts 500, so the response
+    // assertion fails and `run` must exit with the test-failure code (2).
+    let (url, server) = spawn_one_shot("HTTP/1.1 200 OK", "{}");
+    let dir = temp_dir("run-assert-fail");
+    let file = dir.join("requests.http");
+    fs::write(
+        &file,
+        format!("### Health\n# @expect-status 500\nGET {url}\n"),
+    )
+    .unwrap();
+
+    let output = run(&["run", "--file", file.to_str().unwrap(), "--no-cookies"]);
+    server.join().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

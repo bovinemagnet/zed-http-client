@@ -35,17 +35,26 @@ pub fn interpolate_text(text: &str, values: &VariableMap) -> Result<String, Http
     interpolate_impl(text, values, true)
 }
 
+/// The `{{name}}` matcher, compiled once and reused across calls.
+///
+/// `$`-prefixed names are reserved for dynamic variables ($uuid,
+/// $timestamp, ...) and must be allowed both as the leading character and
+/// inside the name (a user could shadow `$timestamp` with
+/// `@$timestamp = 1700000000` for deterministic tests).
+fn interpolation_regex() -> &'static Regex {
+    static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"\{\{\s*([$A-Za-z_][$A-Za-z0-9_.-]*)\s*\}\}")
+            .expect("valid interpolation regex")
+    })
+}
+
 fn interpolate_impl(
     text: &str,
     values: &IndexMap<String, String>,
     fail_on_missing: bool,
 ) -> Result<String, HttpClientError> {
-    // `$`-prefixed names are reserved for dynamic variables ($uuid,
-    // $timestamp, ...) and must be allowed both as the leading character
-    // and inside the name (a user could shadow `$timestamp` with
-    // `@$timestamp = 1700000000` for deterministic tests).
-    let regex = Regex::new(r"\{\{\s*([$A-Za-z_][$A-Za-z0-9_.-]*)\s*\}\}")
-        .expect("valid interpolation regex");
+    let regex = interpolation_regex();
     let mut output = String::with_capacity(text.len());
     let mut last_end = 0usize;
 
@@ -96,5 +105,17 @@ mod tests {
             resolved.get("baseUrl").map(String::as_str),
             Some("https://example.com/api")
         );
+    }
+
+    #[test]
+    fn interpolate_text_fails_on_unknown_variable() {
+        let values = VariableMap::new();
+
+        let result = interpolate_text("GET {{missing}}", &values);
+
+        assert!(matches!(
+            result,
+            Err(HttpClientError::MissingVariable(name)) if name == "missing"
+        ));
     }
 }
