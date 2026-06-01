@@ -156,26 +156,31 @@ zed-http-client/
   CHANGELOG.md
   LICENSE
   antora-playbook.yml         Antora build entry point
-  extension.toml              Zed extension manifest
   tasks.json.example          Zed task wiring (legacy single-task example)
   .zed/tasks.json             Project-local Zed tasks (per-env runnables)
   Cargo.toml                  workspace root
   crates/
     zed-http-cli/             the `zed-http` binary
     zed-http-core/            parser, env, executor, validators, formatter
-  languages/
-    http-request/             Zed language config + queries
-  snippets/
-    http-request.json         Zed snippets
+  extension/
+    extension.toml            Zed extension manifest
+    LICENSE                   licence required at the published extension path
+    languages/
+      http-request/           Zed language config + queries
+    snippets/
+      http-request.json       Zed snippets
   examples/                   sample request and env files
   src/docs/                   Antora documentation source
 ----
 
-The Tree-sitter grammar lives in its own repository, https://github.com/bovinemagnet/tree-sitter-http-request[bovinemagnet/tree-sitter-http-request]; the SHA in `extension.toml` pins exactly what Zed clones at install time.
+The Tree-sitter grammar lives in its own repository, https://github.com/bovinemagnet/tree-sitter-http-request[bovinemagnet/tree-sitter-http-request]; the SHA in `extension/extension.toml` pins exactly what Zed clones at install time.
 
 == Zed integration in one paragraph
 
-Open the project in Zed, run `zed: install dev extension` from the command palette and point it at this repo. The bundled `.zed/tasks.json` wires four per-environment runnables against the `http-client-request` tag on every request line, plus three ancillary tasks (`list requests`, `list available environments`, `validate file`). With your cursor on a request, run `task: spawn` → pick the environment → output appears in Zed's terminal, with the response body also saved under `examples/.zed-http/responses/` for later inspection. The link:src/docs/modules/ROOT/pages/zed-integration.adoc[Zed integration page] covers the suffix-conflict caveats and how to add a new environment to the task list.
+Open the project in Zed, run `zed: install dev extension` from the command palette, and point the file picker at the `extension/` subdirectory of the clone — *not* the repository root.
+The repository root contains a `Cargo.toml` (the native CLI workspace); if you point Zed at the root it will treat the extension as a Rust/WASM extension and fail to compile it for `wasm32`.
+The `extension/` subdirectory has no `Cargo.toml`, so Zed correctly identifies it as a pure language extension.
+The bundled `.zed/tasks.json` wires four per-environment runnables against the `http-client-request` tag on every request line, plus three ancillary tasks (`list requests`, `list available environments`, `validate file`). With your cursor on a request, run `task: spawn` → pick the environment → output appears in Zed's terminal, with the response body also saved under `examples/.zed-http/responses/` for later inspection. The link:src/docs/modules/ROOT/pages/zed-integration.adoc[Zed integration page] covers the suffix-conflict caveats and how to add a new environment to the task list.
 
 == Status and deferred work
 

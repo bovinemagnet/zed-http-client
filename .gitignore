@@ -20,8 +20,10 @@ http-client.private.env.json
 examples/http-client.private.env.json
 .zed-http/
 
-# Tree-sitter generated artefacts; the published grammar repo carries these.
-grammars/tree-sitter-http-request/src/
+# Tree-sitter grammar that Zed clones and compiles next to extension.toml at
+# dev-install time (clone + http_request.wasm). Never vendored here — the
+# published grammar repo at the pinned SHA is the source of truth.
+extension/grammars/
 
 # Antora build output
 build/

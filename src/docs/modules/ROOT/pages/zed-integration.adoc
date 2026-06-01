@@ -9,7 +9,7 @@ All output lands in Zed's integrated terminal panel, and the full response body 
 
 === File-type recognition
 
-Zed recognises files with the `.http` or `.rest` extension as the `HTTP Request` language, as declared in `languages/http-request/config.toml`.
+Zed recognises files with the `.http` or `.rest` extension as the `HTTP Request` language, as declared in `extension/languages/http-request/config.toml`.
 All editor features below apply automatically once you open a file with either suffix.
 
 NOTE: `.rest` is claimed exclusively by this extension.
@@ -54,7 +54,7 @@ The Tree-sitter grammar provides token-level highlighting across the full reques
 
 === Runnable detection
 
-Every `request_line` node — the method-and-URL line at the start of each request block — is captured with the `http-client-request` tag via `languages/http-request/runnables.scm`.
+Every `request_line` node — the method-and-URL line at the start of each request block — is captured with the `http-client-request` tag via `extension/languages/http-request/runnables.scm`.
 Zed's task system uses this tag to match which tasks are available when the cursor is inside a request block.
 
 === Snippets
@@ -98,11 +98,18 @@ Install it directly from the source repository.
 
 . Clone {project-repo}.
 . In Zed, open the command palette and run `zed: install dev extension`.
-. Point the file picker at the cloned directory.
-. Zed compiles the Tree-sitter grammar automatically, cloning from the grammar repo at the SHA pinned in `extension.toml`.
+. Point the file picker at the `extension/` subdirectory of the clone — *not* the repository root.
+. Zed compiles the Tree-sitter grammar automatically, cloning from the grammar repo at the SHA pinned in `extension/extension.toml`.
+
+[NOTE]
+====
+The repository root contains a `Cargo.toml` for the native CLI workspace.
+Zed treats any directory containing a `Cargo.toml` as a Rust/WASM extension and will attempt a `wasm32` compile, which fails.
+Pointing at `extension/` (which has no `Cargo.toml`) causes Zed to treat it as a pure language extension, which is the correct behaviour.
+====
 
 TIP: After the initial compile, Zed caches the WASM grammar.
-If you bump the `rev` in `extension.toml`, restart Zed to trigger a fresh compile.
+If you bump the `rev` in `extension/extension.toml`, restart Zed to trigger a fresh compile.
 
 == Triggering a request from the editor
 
@@ -240,7 +247,7 @@ To propose a grammar change:
 . Edit `grammar.js` there.
 . Run `npx tree-sitter generate` to regenerate `src/parser.c`.
 . Commit and push the change; tag it with the next `0.x` version.
-. Copy the new commit SHA into the `rev` field under `[grammars.http_request]` in `extension.toml`.
+. Copy the new commit SHA into the `rev` field under `[grammars.http_request]` in `extension/extension.toml`.
 . Reinstall the dev extension in Zed to pick up the new grammar.
 
 For more detail on what the CLI accepts in the request files, see xref:http-file-syntax.adoc[Request file syntax], xref:directives.adoc[Directives reference], and xref:environments.adoc[Environments and variables].

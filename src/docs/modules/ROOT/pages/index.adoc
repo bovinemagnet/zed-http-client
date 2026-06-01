@@ -56,24 +56,28 @@ query GetUser($id: ID!) {
 
 ----
 zed-http-client/
-  extension.toml                  <1>
-  tasks.json.example              <2>
+  tasks.json.example              <1>
   Cargo.toml
   crates/
-    zed-http-cli/                 <3>
-    zed-http-core/                <4>
-  languages/
-    http-request/                 <5>
-  examples/                       <6>
-  src/docs/                       <7>
+    zed-http-cli/                 <2>
+    zed-http-core/                <3>
+  extension/
+    extension.toml                <4>
+    languages/
+      http-request/               <5>
+    snippets/
+      http-request.json           <6>
+  examples/                       <7>
+  src/docs/                       <8>
 ----
-<1> Zed extension manifest; pins the Tree-sitter grammar SHA.
-<2> Ready-to-copy Zed task definitions; copy to `.zed/tasks.json` in your project.
-<3> The `zed-http` binary crate.
-<4> The parsing, interpolation, validation, and HTTP execution library.
-<5> Zed language configuration: file-type associations, highlight queries, injection queries, and the snippets file.
-<6> Example `.http` file and environment JSON used throughout this documentation.
-<7> This documentation (Antora component, ROOT module).
+<1> Ready-to-copy Zed task definitions; copy to `.zed/tasks.json` in your project.
+<2> The `zed-http` binary crate.
+<3> The parsing, interpolation, validation, and HTTP execution library.
+<4> Zed extension manifest; pins the Tree-sitter grammar SHA.
+<5> Zed language configuration: file-type associations, highlight queries, and injection queries.
+<6> Zed snippets for the `http-request` language.
+<7> Example `.http` file and environment JSON used throughout this documentation.
+<8> This documentation (Antora component, ROOT module).
 
 == Status
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-06-01
+
+### Changed
+
+- **The Zed extension now lives in its own `extension/` subdirectory**
+  (`extension/extension.toml` + `extension/languages/http-request/`),
+  moved out of the repository root. A Zed extension directory must not
+  contain a `Cargo.toml`: Zed treats one as a Rust/WASM extension and
+  tries to compile it to `wasm32`. The repo root holds the native CLI
+  Cargo workspace, so installing the dev extension from the root failed
+  with "error compiling rust extension". Install dev extensions by
+  pointing `zed: install dev extension` at the `extension/` directory.
+  The CLI workspace and all `cargo` commands are unaffected.
+- `snippets/` moved into `extension/snippets/` so the snippets are
+  bundled with the extension (Zed discovers `snippets/` relative to
+  `extension.toml`). A copy of the licence now lives at
+  `extension/LICENSE`, which the Zed registry requires when an
+  extension is published from a subdirectory (via the `path` field).
+- `.gitignore` now ignores `extension/grammars/` — the Tree-sitter
+  grammar that Zed clones and compiles next to `extension.toml` at
+  install time. The grammar remains un-vendored; its own repository at
+  the pinned SHA is the source of truth.
+
 ## [0.4.8] - 2026-05-22
 
 Consolidates the improvements made since 0.4.7. The headline change is

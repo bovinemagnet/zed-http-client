@@ -30,13 +30,21 @@ git clone https://github.com/bovinemagnet/zed-http-client.git
 zed: install dev extension
 ----
 
-. In the file-picker that appears, navigate to the cloned directory and confirm.
+. In the file-picker that appears, navigate to the `extension/` subdirectory of the clone and confirm.
 
 Zed will compile the extension grammar and activate file-type recognition for `.http` and `.rest` files.
 
 [NOTE]
 ====
-The `extension.toml` manifest references the grammar under the key `[grammars.http_request]`.
+You must select the `extension/` subdirectory, not the repository root.
+The repository root contains a `Cargo.toml` for the native CLI workspace.
+Zed treats any directory that contains a `Cargo.toml` as a Rust/WASM extension and attempts to compile it to WebAssembly — which fails because the CLI workspace uses `tokio`, `reqwest`, and other crates that do not target `wasm32`.
+The `extension/` subdirectory has no `Cargo.toml`, so Zed correctly treats it as a pure language extension.
+====
+
+[NOTE]
+====
+The `extension/extension.toml` manifest references the grammar under the key `[grammars.http_request]`.
 The corresponding Rust crate inside Zed must be `tree_sitter_http_request` (underscore, not hyphen).
 A mismatch between the manifest key and the crate name will cause silent grammar loading failures.
 If highlighting does not appear, verify that the key reads `http_request` throughout — this was a known issue fixed in the v0.4 era.
@@ -135,10 +143,10 @@ cargo run -p zed-http-cli -- list --file examples/requests.http
 
 Empty `injections.scm` files::
   Zed rejects injection query files that are completely empty.
-  If syntax highlighting for embedded content (JSON bodies, GraphQL queries) is absent, check that `languages/http-request/injections.scm` is non-empty.
+  If syntax highlighting for embedded content (JSON bodies, GraphQL queries) is absent, check that `extension/languages/http-request/injections.scm` is non-empty.
 
 Grammar SHA mismatch::
-  The `rev` field in `extension.toml` under `[grammars.http_request]` must point to a valid commit on {grammar-repo}.
+  The `rev` field in `extension/extension.toml` under `[grammars.http_request]` must point to a valid commit on {grammar-repo}.
   If Zed reports a grammar compile error, confirm the SHA is current.
 
 Hyphen vs underscore in the grammar key::

@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-cli"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "zed-http-core"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "anyhow",
  "base64",
