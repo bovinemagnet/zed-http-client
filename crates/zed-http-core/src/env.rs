@@ -117,8 +117,11 @@ fn discover_env_file(
     worktree_root: Option<&Path>,
     file_name: &str,
 ) -> Result<Option<PathBuf>, HttpClientError> {
-    let start_dir = http_file.parent().unwrap_or_else(|| Path::new("."));
-    let stop_at = worktree_root.map(Path::to_path_buf);
+    // Both sides are canonicalised before comparison: `--worktree .` or a path
+    // reached through a symlink is not a textual ancestor of the request file,
+    // and a lexical comparison would walk straight past the boundary to `/`.
+    let start_dir = canonical_dir(http_file.parent().unwrap_or_else(|| Path::new(".")));
+    let stop_at = worktree_root.map(canonical_dir);
 
     for dir in start_dir.ancestors() {
         let candidate = dir.join(file_name);
@@ -128,9 +131,28 @@ fn discover_env_file(
         if stop_at.as_deref() == Some(dir) {
             break;
         }
+        // A worktree that isn't an ancestor of the request file confines the
+        // search to the directories at or below it, rather than leaking upward.
+        if stop_at.as_ref().is_some_and(|stop| !dir.starts_with(stop)) {
+            break;
+        }
     }
 
     Ok(None)
+}
+
+/// Resolve `path` to an absolute, symlink-free directory. `std::path::absolute`
+/// would do for the fallback but postdates the 1.74 MSRV.
+fn canonical_dir(path: &Path) -> PathBuf {
+    if let Ok(canonical) = fs::canonicalize(path) {
+        return canonical;
+    }
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -278,5 +300,74 @@ mod tests {
         let values = load_environment(&request_file, Some(&dir), Some("prod")).unwrap();
 
         assert!(values.is_empty());
+    }
+
+    #[test]
+    fn finds_an_env_file_in_an_ancestor_directory_inside_the_worktree() {
+        let root = temp_dir();
+        let nested = root.join("api").join("v1");
+        fs::create_dir_all(&nested).unwrap();
+        let request_file = nested.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+        fs::write(
+            root.join("http-client.env.json"),
+            r#"{ "dev": { "host": "https://root.example.com" } }"#,
+        )
+        .unwrap();
+
+        let values = load_environment(&request_file, Some(&root), Some("dev")).unwrap();
+
+        assert_eq!(
+            values.get("host").map(String::as_str),
+            Some("https://root.example.com")
+        );
+    }
+
+    #[test]
+    fn does_not_escape_a_worktree_expressed_non_canonically() {
+        // `outside` sits above the worktree root and must never be consulted.
+        let outside = temp_dir();
+        let worktree = outside.join("project");
+        let nested = worktree.join("api");
+        fs::create_dir_all(&nested).unwrap();
+        let request_file = nested.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+        fs::write(
+            outside.join("http-client.env.json"),
+            r#"{ "dev": { "host": "https://leaked.example.com" } }"#,
+        )
+        .unwrap();
+
+        // `<worktree>/api/..` is the same directory as `<worktree>`, but it is
+        // not a textual ancestor of the request file's directory.
+        let non_canonical = nested.join("..");
+        let values = load_environment(&request_file, Some(&non_canonical), Some("dev")).unwrap();
+
+        assert!(
+            values.is_empty(),
+            "env discovery escaped the worktree and found {values:?}"
+        );
+    }
+
+    #[test]
+    fn does_not_escape_when_the_worktree_is_not_an_ancestor_at_all() {
+        let outside = temp_dir();
+        let worktree = temp_dir();
+        let nested = outside.join("api");
+        fs::create_dir_all(&nested).unwrap();
+        let request_file = nested.join("requests.http");
+        fs::write(&request_file, "GET https://example.com\n").unwrap();
+        fs::write(
+            outside.join("http-client.env.json"),
+            r#"{ "dev": { "host": "https://leaked.example.com" } }"#,
+        )
+        .unwrap();
+
+        let values = load_environment(&request_file, Some(&worktree), Some("dev")).unwrap();
+
+        assert!(
+            values.is_empty(),
+            "env discovery ascended out of an unrelated worktree and found {values:?}"
+        );
     }
 }

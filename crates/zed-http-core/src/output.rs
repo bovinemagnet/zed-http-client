@@ -8,7 +8,7 @@
 //! request name, falling back to the HTTP method.
 //!
 //! The same base directory hosts the schema cache
-//! (`<base>/.zed-http/schema/<host>.json`) and the cookie jar
+//! (`<base>/.zed-http/schema/<slug>.json`) and the cookie jar
 //! (`<base>/.zed-http/cookies.json`), kept together so a user can wipe
 //! all extension state with one `rm -rf`.
 
@@ -50,12 +50,15 @@ fn base_artifact_dir(http_file: &Path, worktree_root: Option<&Path>) -> PathBuf 
     base.join(".zed-http")
 }
 
+/// `body` is the raw response bytes. Responses are not necessarily UTF-8
+/// (images, gzip, protobuf, latin-1 text), so nothing on the persistence path
+/// may go through a lossy `String` conversion.
 pub fn save_response(
     base_dir: &Path,
     request_name: Option<&str>,
     method: &RequestMethod,
     content_type: Option<&str>,
-    body: &str,
+    body: &[u8],
 ) -> Result<PathBuf, HttpClientError> {
     fs::create_dir_all(base_dir)?;
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
@@ -247,7 +250,7 @@ mod tests {
             Some("List Users"),
             &RequestMethod::Get,
             Some("application/json; charset=utf-8"),
-            r#"{"ok":true}"#,
+            br#"{"ok":true}"#,
         )
         .unwrap();
 
@@ -255,6 +258,25 @@ mod tests {
         let name = path.file_name().unwrap().to_string_lossy();
         assert!(name.ends_with("-list-users.json"), "got {name}");
         assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn save_response_preserves_non_utf8_bytes() {
+        let dir = temp_dir().join("responses");
+        // A PNG header: 0x89 is not valid UTF-8 and would become U+FFFD if the
+        // body were routed through `String::from_utf8_lossy`.
+        let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFE];
+
+        let path = save_response(
+            &dir,
+            Some("Logo"),
+            &RequestMethod::Get,
+            Some("image/png"),
+            &png,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), png);
     }
 
     #[test]
@@ -266,7 +288,7 @@ mod tests {
             Some("Ping"),
             &RequestMethod::Get,
             Some("application/json"),
-            "{}",
+            b"{}",
         )
         .unwrap();
         let second = save_response(
@@ -274,7 +296,7 @@ mod tests {
             Some("Ping"),
             &RequestMethod::Get,
             Some("application/json"),
-            "{}",
+            b"{}",
         )
         .unwrap();
 
@@ -286,7 +308,7 @@ mod tests {
     #[test]
     fn save_response_falls_back_to_method_when_unnamed() {
         let dir = temp_dir().join("responses");
-        let path = save_response(&dir, None, &RequestMethod::Delete, None, "").unwrap();
+        let path = save_response(&dir, None, &RequestMethod::Delete, None, b"").unwrap();
         let name = path.file_name().unwrap().to_string_lossy();
         assert!(name.ends_with("-delete.body"), "got {name}");
     }
