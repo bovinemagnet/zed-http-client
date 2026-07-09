@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Binary response bodies are no longer corrupted.** The response body was
+  converted with `String::from_utf8_lossy` before being written, so every
+  non-UTF-8 byte in a saved response, a `>>` / `>>!` redirect target, or
+  `--output raw` became U+FFFD. Persistence is now bytes-first; only the
+  preview, assertions, and captures see a text view.
+- **The first request in a file is no longer dropped.** A bare request ahead of
+  the first `###` separator was silently discarded; IntelliJ runs it, and so do
+  we now.
+- **`GET https://example.com/a HTTP/1.1` now parses.** The trailing
+  `HTTP/x.y` token was being glued onto the URL, which `reqwest` then rejected.
+- **A single-line body starting with `<` is inline again.** `<hello/>` was read
+  as a reference to a file named `hello/>`. A from-file body now requires the
+  space in `< ./body.json`, matching IntelliJ.
+- **`@name = value` inside a request section no longer fails the whole file**,
+  nor does a variable declared ahead of a bare request in a separator-less file.
+- **An indented `###` inside a request body no longer splits the file.** Only a
+  column-0 `###` is a separator, so a markdown or text body containing a heading
+  no longer makes every request in the file unrunnable.
+- **Importers can no longer emit a `.http` file that means something else.** A
+  request name containing a newline could smuggle in an extra request; bodies
+  containing a `###`, `>>`, or `< ` line round-tripped to different requests.
+  Names are sanitised, and the CLI now renders imports through
+  `format_request_file_checked`, which re-parses its own output and fails loudly
+  rather than writing a corrupted file.
+- **`curl` import handles the shapes browsers actually emit.** `-XPOST` and
+  other attached short-option values (`-H'Accept: x'`, `-dpayload`) were silently
+  dropped, so `curl -XPOST …` imported as a GET; value-taking short flags
+  (`-o`, `-m`, …) did not consume their argument and it was mistaken for the URL;
+  and bash ANSI-C `$'...'` quoting — what Chrome emits whenever a body contains
+  quotes or newlines — was not decoded. `-d @file` mixed with textual `-d` no
+  longer silently discards the text, `-H` now yields to nothing when `-u` is also
+  given (curl lets `-H` win), and `-H 'Name;'` empty-value syntax is understood.
+- **Environment discovery can no longer escape the worktree.** The `--worktree`
+  boundary was compared as plain text, so a relative root (`--worktree .`) or a
+  path reached through a symlink never matched an ancestor and the walk continued
+  to the filesystem root, potentially reading an `http-client.env.json` from
+  outside the project. Both paths are canonicalised first.
+- **Unresolved `{{variables}}` can no longer reach the wire.** A typo nested
+  inside an env value (`"baseUrl": "https://{{hots}}.example.com"`) was
+  substituted in verbatim and sent as literal braces with exit code 0. The
+  interpolated output is now rescanned and reports the missing name. Reference
+  cycles are reported instead of silently passing through, and a self-referential
+  value can no longer grow until it exhausts memory.
+- **GraphQL schema validation no longer rejects valid queries.** Braces, parens,
+  and `#` inside string arguments (`query { search(q: "}{") … }`) were counted as
+  structure, producing a bogus "field not declared" pre-flight failure (exit 3).
+  String and block-string literals are now skipped, and a `fragment` declared
+  ahead of the operation is no longer mistaken for its selection set.
+
+### Changed
+
+- **The GraphQL schema cache is keyed by scheme, host, port, and path** rather
+  than host alone, so `localhost:4000/graphql` and `localhost:5000/graphql` no
+  longer overwrite each other's schema. Caches written under the old host-only
+  filename are still read for one release. `introspect` now writes the same key
+  the reader looks for instead of an unreadable fallback name.
+
 ## [0.4.9] - 2026-06-01
 
 ### Changed

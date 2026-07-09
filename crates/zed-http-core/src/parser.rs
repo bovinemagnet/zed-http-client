@@ -34,50 +34,35 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
         .map(|(idx, line)| (idx + 1, line))
         .collect();
 
-    let mut requests = Vec::new();
-    let mut variables = Vec::new();
-    let mut default_env: Option<String> = None;
+    // Split on column-0 `###` markers. An indented `###` is body content, not
+    // a separator. The region before the first marker is a section in its own
+    // right: it may carry file variables, `# @env`, and — as IntelliJ allows —
+    // an unnamed first request.
+    let mut sections: Vec<(Option<String>, &[NumberedLine<'_>])> = Vec::new();
     let mut section_start = 0usize;
     let mut pending_name: Option<String> = None;
-    let mut seen_separator = false;
 
     for (idx, (_, line)) in lines.iter().enumerate() {
-        if line.trim_start().starts_with("###") {
-            if !seen_separator {
-                variables.extend(parse_variables(&lines[0..idx]));
-                default_env = parse_default_env(&lines[0..idx])?;
-            } else if let Some(request) =
-                parse_section(&lines[section_start..idx], pending_name.take())?
-            {
-                requests.push(request);
-            }
-
-            seen_separator = true;
-            section_start = idx + 1;
-            pending_name = parse_request_name(line);
+        if !line.starts_with("###") {
+            continue;
         }
+        sections.push((pending_name.take(), &lines[section_start..idx]));
+        section_start = idx + 1;
+        pending_name = parse_request_name(line);
     }
+    sections.push((pending_name, &lines[section_start..]));
 
-    if seen_separator {
-        if let Some(request) = parse_section(&lines[section_start..], pending_name)? {
+    // `# @env` is a file-level directive, so it is only honoured in the
+    // preamble ahead of the first separator.
+    let default_env = parse_default_env(sections[0].1)?;
+
+    let mut requests = Vec::new();
+    let mut variables = Vec::new();
+    for (name, section_lines) in sections {
+        let section = parse_section(section_lines, name)?;
+        variables.extend(section.variables);
+        if let Some(request) = section.block {
             requests.push(request);
-        }
-    } else {
-        let prelude_vars = parse_variables(&lines);
-        let prelude_env = parse_default_env(&lines)?;
-        if prelude_vars.len() == lines.len()
-            || lines
-                .iter()
-                .all(|(_, line)| line.trim().is_empty() || is_comment(line))
-        {
-            variables = prelude_vars;
-            default_env = prelude_env;
-        } else {
-            variables = prelude_vars;
-            default_env = prelude_env;
-            if let Some(request) = parse_section(&lines, None)? {
-                requests.push(request);
-            }
         }
     }
 
@@ -132,13 +117,6 @@ pub fn select_request_by_name<'a>(file: &'a RequestFile, name: &str) -> Option<&
     })
 }
 
-fn parse_variables(lines: &[NumberedLine<'_>]) -> Vec<InPlaceVariable> {
-    lines
-        .iter()
-        .filter_map(|(line_no, line)| parse_variable(*line_no, line))
-        .collect()
-}
-
 fn parse_variable(line_no: usize, line: &str) -> Option<InPlaceVariable> {
     let trimmed = line.trim();
     if !trimmed.starts_with('@') {
@@ -162,14 +140,22 @@ fn parse_request_name(line: &str) -> Option<String> {
     }
 }
 
+/// One `###`-delimited region: the request it declares (if any) plus the
+/// `@name = value` variables its preamble contributes to the file.
+struct ParsedSection {
+    block: Option<RequestBlock>,
+    variables: Vec<InPlaceVariable>,
+}
+
 fn parse_section(
     lines: &[NumberedLine<'_>],
     name: Option<String>,
-) -> Result<Option<RequestBlock>, HttpClientError> {
+) -> Result<ParsedSection, HttpClientError> {
     let mut cursor = 0usize;
     let mut options = RequestOptions::default();
     let mut assertions: Vec<ResponseAssertion> = Vec::new();
     let mut captures: Vec<CaptureDirective> = Vec::new();
+    let mut variables: Vec<InPlaceVariable> = Vec::new();
     while cursor < lines.len() {
         let (line_no, line) = lines[cursor];
         let trimmed = line.trim();
@@ -192,11 +178,19 @@ fn parse_section(
             cursor += 1;
             continue;
         }
+        if let Some(variable) = parse_variable(line_no, line) {
+            variables.push(variable);
+            cursor += 1;
+            continue;
+        }
         break;
     }
 
     if cursor >= lines.len() {
-        return Ok(None);
+        return Ok(ParsedSection {
+            block: None,
+            variables,
+        });
     }
 
     let (request_line_no, request_line) = lines[cursor];
@@ -212,7 +206,7 @@ fn parse_section(
             line: request_line_no,
             content: request_line.to_string(),
         })?;
-    let url = url_text.trim().to_string();
+    let url = strip_http_version(url_text.trim()).to_string();
 
     cursor += 1;
     let mut headers = Vec::new();
@@ -247,21 +241,44 @@ fn parse_section(
         .unwrap_or(request_line_no);
     let response_redirect = redirect.map(|(_, value)| value);
 
-    Ok(Some(RequestBlock {
-        name,
-        method,
-        url,
-        headers,
-        body,
-        options,
-        assertions,
-        captures,
-        response_redirect,
-        range: SourceRange {
-            start_line: request_line_no,
-            end_line,
-        },
-    }))
+    Ok(ParsedSection {
+        block: Some(RequestBlock {
+            name,
+            method,
+            url,
+            headers,
+            body,
+            options,
+            assertions,
+            captures,
+            response_redirect,
+            range: SourceRange {
+                start_line: request_line_no,
+                end_line,
+            },
+        }),
+        variables,
+    })
+}
+
+/// `METHOD URI HTTP-Version` is standard request-line syntax; the version is
+/// informational here, so drop it rather than gluing it onto the URL.
+fn strip_http_version(url: &str) -> &str {
+    match url.rsplit_once(char::is_whitespace) {
+        Some((head, version)) if is_http_version(version) && !head.trim().is_empty() => {
+            head.trim_end()
+        }
+        _ => url,
+    }
+}
+
+fn is_http_version(token: &str) -> bool {
+    match token.strip_prefix("HTTP/") {
+        Some(digits) => {
+            !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit() || c == '.')
+        }
+        None => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -525,9 +542,12 @@ fn build_body(body_lines: &[NumberedLine<'_>]) -> Result<Option<RequestBody>, Ht
     }
     let first_non_blank = body_lines.iter().find(|(_, line)| !line.trim().is_empty());
     if let Some((_, first)) = first_non_blank {
-        if let Some(path) = first.trim_start().strip_prefix('<') {
-            let path = path.trim();
-            if !path.is_empty()
+        // `< ./body.json` is a file reference; `<hello/>` is an XML body. The
+        // separating whitespace is what tells them apart.
+        if let Some(rest) = first.trim_start().strip_prefix('<') {
+            let path = rest.trim();
+            if rest.starts_with(char::is_whitespace)
+                && !path.is_empty()
                 && body_lines
                     .iter()
                     .filter(|(_, line)| !line.trim().is_empty())
@@ -834,6 +854,99 @@ Content-Type: application/json
         assert_eq!(
             select_request_by_line(&file, 5).unwrap().name.as_deref(),
             Some("Two")
+        );
+    }
+
+    #[test]
+    fn keeps_a_bare_first_request_ahead_of_a_separator() {
+        let input = "GET https://first.example.com\n\n### Second\nGET https://second.example.com\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests.len(), 2);
+        assert_eq!(file.requests[0].url, "https://first.example.com");
+        assert_eq!(file.requests[0].name, None);
+        assert_eq!(file.requests[1].name.as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn keeps_prelude_variables_alongside_a_bare_first_request() {
+        let input =
+            "@host = https://example.com\n\nGET {{host}}/ping\n\n### Second\nGET {{host}}/pong\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.variables.len(), 1);
+        assert_eq!(file.variables[0].name, "host");
+        assert_eq!(file.requests.len(), 2);
+    }
+
+    #[test]
+    fn strips_http_version_token_from_the_request_line() {
+        let input = "### Versioned\nGET https://example.com/a HTTP/1.1\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests[0].url, "https://example.com/a");
+    }
+
+    #[test]
+    fn keeps_a_url_that_merely_contains_http_in_a_segment() {
+        let input = "### Plain\nGET https://example.com/HTTP/1.1\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests[0].url, "https://example.com/HTTP/1.1");
+    }
+
+    #[test]
+    fn treats_single_line_xml_body_as_inline_not_a_file_reference() {
+        let input =
+            "### Xml\nPOST https://example.com\nContent-Type: application/xml\n\n<hello/>\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(
+            file.requests[0].body,
+            Some(RequestBody::Inline("<hello/>".to_string()))
+        );
+    }
+
+    #[test]
+    fn allows_variables_inside_a_section() {
+        let input = "### Req\n@host = https://example.com\nGET {{host}}/ping\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests.len(), 1);
+        assert_eq!(file.requests[0].url, "{{host}}/ping");
+        assert_eq!(file.variables.len(), 1);
+        assert_eq!(file.variables[0].name, "host");
+    }
+
+    #[test]
+    fn allows_variables_ahead_of_a_bare_request_without_separators() {
+        let input = "@host = https://example.com\nGET {{host}}/ping\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests.len(), 1);
+        assert_eq!(file.requests[0].url, "{{host}}/ping");
+        assert_eq!(file.variables.len(), 1);
+    }
+
+    #[test]
+    fn indented_hash_marker_inside_a_body_does_not_split_the_file() {
+        let input = concat!(
+            "### Notes\n",
+            "POST https://example.com/notes\n",
+            "Content-Type: text/markdown\n",
+            "\n",
+            "intro\n",
+            "   ### heading\n",
+            "rest of the note\n",
+        );
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests.len(), 1);
+        assert_eq!(
+            file.requests[0].body,
+            Some(RequestBody::Inline(
+                "intro\n   ### heading\nrest of the note".to_string()
+            ))
         );
     }
 }

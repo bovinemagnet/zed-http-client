@@ -30,7 +30,9 @@
 //!   `$timestamp`, `$isoTimestamp`, `$randomInt`) generated fresh per
 //!   request and overridable by user-defined variables of the same name.
 //! - [`format`] — re-emits a parsed file in canonical layout, used by
-//!   `zed-http format`.
+//!   `zed-http format` and by the importers. `format_request_file_checked`
+//!   re-parses its own output first, so importer data that the format cannot
+//!   express fails loudly instead of writing a corrupted file.
 //! - [`output`] — pretty-printers, response persistence under `.zed-http/`,
 //!   and the conventional paths for the response/schema/cookie artefact
 //!   directories.
@@ -71,7 +73,7 @@ pub use executor::{
     parse_and_select_request, prepare_request, prepare_request_with_extras, RequestSelector,
     ResolvedRequest,
 };
-pub use format::format_request_file;
+pub use format::{format_request_file, format_request_file_checked};
 pub use graphql::{
     build_graphql_payload, introspection_payload, parse_variable_definitions, render_graphql_json,
     render_graphql_json_with_extras, validate_variables, VariableDefinition, INTROSPECTION_QUERY,

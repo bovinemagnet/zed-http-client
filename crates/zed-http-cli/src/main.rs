@@ -28,6 +28,7 @@
 
 use std::{
     fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -42,7 +43,7 @@ use reqwest_cookie_store::CookieStoreMutex;
 use serde_json::json;
 use zed_http_core::{
     build_preview, cookie_jar_path, decode_har_input, evaluate_assertions, evaluate_captures,
-    format_pretty_response, format_request_file, import_curl, import_har,
+    format_pretty_response, format_request_file_checked, import_curl, import_har,
     import_postman_collection, introspection_payload, list_environments, load_cached_schema,
     mask_variables, parse_request_file, prepare_request, prepare_request_with_extras,
     response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
@@ -470,7 +471,8 @@ fn import_command(command: ImportCommand) -> Result<()> {
                 .with_context(|| format!("failed to read {}", file.display()))?;
             let request_file = import_postman_collection(&raw)
                 .with_context(|| format!("failed to import {}", file.display()))?;
-            let rendered = format_request_file(&request_file);
+            let rendered = format_request_file_checked(&request_file)
+                .context("the imported requests cannot be written as a .http file")?;
             emit_import_output(
                 out.as_deref(),
                 &rendered,
@@ -489,7 +491,8 @@ fn import_command(command: ImportCommand) -> Result<()> {
                 .with_context(|| format!("failed to decode {}", file.display()))?;
             let request_file = import_har(&raw, name_prefix.as_deref())
                 .with_context(|| format!("failed to import {}", file.display()))?;
-            let rendered = format_request_file(&request_file);
+            let rendered = format_request_file_checked(&request_file)
+                .context("the imported requests cannot be written as a .http file")?;
             emit_import_output(
                 out.as_deref(),
                 &rendered,
@@ -529,7 +532,8 @@ fn import_command(command: ImportCommand) -> Result<()> {
             };
             let request_file = import_curl(&raw, name.as_deref())
                 .with_context(|| format!("failed to import curl command from {source_label}"))?;
-            let rendered = format_request_file(&request_file);
+            let rendered = format_request_file_checked(&request_file)
+                .context("the imported requests cannot be written as a .http file")?;
             emit_import_output(
                 out.as_deref(),
                 &rendered,
@@ -695,7 +699,8 @@ fn format_command(file: &Path, in_place: bool, check: bool) -> Result<()> {
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
     let request_file = parse_request_file(&contents)
         .with_context(|| format!("failed to parse {}", file.display()))?;
-    let formatted = format_request_file(&request_file);
+    let formatted = format_request_file_checked(&request_file)
+        .with_context(|| format!("failed to format {}", file.display()))?;
 
     if check {
         if contents != formatted {
@@ -789,14 +794,14 @@ async fn introspect_command(
             fs::create_dir_all(&dir).with_context(|| {
                 format!("failed to create schema cache directory {}", dir.display())
             })?;
-            let slug = schema_slug(&resolved.url).unwrap_or_else(|| {
-                resolved
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| "schema".to_string())
-                    .to_ascii_lowercase()
-                    .replace(|c: char| !c.is_ascii_alphanumeric(), "-")
-            });
+            // Must agree with `load_cached_schema`'s key, otherwise the cache
+            // we just wrote could never be read back.
+            let slug = schema_slug(&resolved.url).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot derive a schema cache name from URL '{}' — pass --out to choose one",
+                    resolved.url
+                )
+            })?;
             dir.join(format!("{slug}.json"))
         }
     };
@@ -986,7 +991,9 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
                 }
             }
         }
-        OutputMode::Raw => print!("{}", outcome.body_text),
+        // Written as bytes: piping a binary or non-UTF-8 body through
+        // `zed-http run --output raw` must reproduce it exactly.
+        OutputMode::Raw => io::stdout().write_all(&outcome.body_bytes)?,
         OutputMode::Json => {
             let body_value = serde_json::from_str::<serde_json::Value>(&outcome.body_text)
                 .unwrap_or_else(|_| json!(outcome.body_text));
@@ -1048,6 +1055,7 @@ struct RequestOutcome {
     content_type: Option<String>,
     saved_path: PathBuf,
     redirect_path: Option<PathBuf>,
+    body_bytes: Vec<u8>,
     body_text: String,
     body_preview: String,
     assertion_failures: Vec<zed_http_core::AssertionFailure>,
@@ -1385,6 +1393,8 @@ async fn execute_resolved_request(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
     let body_bytes = response.bytes().await?;
+    // Persistence uses the raw bytes; only the text-shaped consumers
+    // (assertions, captures, preview) see this lossy view.
     let body_text = String::from_utf8_lossy(&body_bytes).to_string();
 
     let response_view = AssertionResponse {
@@ -1400,10 +1410,10 @@ async fn execute_resolved_request(
         resolved.name.as_deref(),
         &resolved.method,
         content_type.as_deref(),
-        &body_text,
+        &body_bytes,
     )?;
     let redirect_path = match resolved.response_redirect.as_ref() {
-        Some(redirect) => Some(write_response_redirect(file, redirect, &body_text)?),
+        Some(redirect) => Some(write_response_redirect(file, redirect, &body_bytes)?),
         None => None,
     };
     let body_preview = build_preview(content_type.as_deref(), &body_text);
@@ -1422,6 +1432,7 @@ async fn execute_resolved_request(
         content_type,
         saved_path,
         redirect_path,
+        body_bytes: body_bytes.to_vec(),
         body_text,
         body_preview,
         assertion_failures,
@@ -1516,7 +1527,7 @@ fn build_client(
 fn write_response_redirect(
     http_file: &Path,
     redirect: &zed_http_core::ResponseRedirect,
-    body: &str,
+    body: &[u8],
 ) -> Result<PathBuf> {
     let base_dir = http_file.parent().unwrap_or_else(|| Path::new("."));
     let target = base_dir.join(&redirect.path);
