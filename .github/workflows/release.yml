@@ -1,14 +1,19 @@
 name: Release
 
 # Fires when a maintainer pushes an annotated `v*` tag (e.g. `v0.4.8`).
-# Two jobs:
+# Three jobs:
 #
-#   1. create-release  — runs once on ubuntu-latest, creates the
+#   1. verify          — the test suite plus the version-lockstep check,
+#      including that the tag matches the version the crates declare.
+#      Everything else depends on this, so a tag pushed onto a broken
+#      commit never gets a release, let alone binaries.
+#
+#   2. create-release  — runs once on ubuntu-latest, creates the
 #      GitHub Release using the tag's annotation as the body. This must
 #      complete before the matrix uploads anything, otherwise the
 #      taiki-e action sees "release not found" and gives up.
 #
-#   2. build           — matrix over five targets, builds zed-http, and
+#   3. build           — matrix over five targets, builds zed-http, and
 #      attaches each archive + SHA-256 sidecar to the release.
 #
 # All inputs to this workflow are either hardcoded in the matrix below
@@ -25,8 +30,31 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Verify the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-verify
+
+      # CI already ran the suite on three OSes for this commit when it landed
+      # on main. Re-running it here on one OS is the gate that a tag cannot
+      # skip: it is the tagged tree, not a branch, that ships.
+      - run: cargo test --workspace --locked
+
+      # `github.ref_name` is a tag we pushed ourselves, but pass it through
+      # env rather than interpolating it into the shell command.
+      - name: Assert versions are in lockstep with the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./scripts/check-versions.sh "$TAG"
+
   create-release:
     name: Create GitHub Release
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +81,9 @@ jobs:
 
   build:
     name: ${{ matrix.target }}
-    needs: create-release
+    # create-release already depends on verify; naming both keeps the gate
+    # explicit if the release step is ever reordered.
+    needs: [verify, create-release]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

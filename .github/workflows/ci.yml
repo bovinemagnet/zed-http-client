@@ -46,6 +46,36 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  versions:
+    name: version lockstep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-versions.sh
+
+  extension:
+    name: extension + grammar queries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # python3 on ubuntu-latest is >= 3.11, so tomllib is in the stdlib.
+      - run: ./scripts/check-extension.sh
+
+  docs:
+    name: antora docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # --log-failure-level=warn is what turns a broken xref or a page missing
+      # from nav.adoc into a failed build; without it Antora logs and exits 0.
+      - run: npx -y antora@3.1.12 --fetch --log-failure-level=warn antora-playbook.yml
+
   msrv:
     name: MSRV 1.74
     runs-on: ubuntu-latest
