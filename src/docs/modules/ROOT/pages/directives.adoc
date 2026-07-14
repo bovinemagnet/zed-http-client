@@ -6,8 +6,11 @@ They carry structured metadata that the parser and executor act on.
 
 The parser recognises two scopes: *file-preamble directives* appear before the first `###` separator and affect the whole file; *section-preamble directives* appear between a `###` separator and the request line and affect only that one request.
 
-Unknown directive names are silently ignored, matching IntelliJ's forward-compatibility behaviour.
-A future version of the extension may introduce new directives that older versions of `zed-http` will simply skip.
+An unrecognised `# @...` directive has no effect on execution — it does not change how the request is built or sent — matching IntelliJ's forward-compatibility behaviour.
+`zed-http format` does not delete unrecognised directive lines: it preserves them verbatim on a format round-trip, so a future directive such as `# @no-cookie-jar` survives being formatted, even though it still has no effect on the request.
+
+NOTE: `# @env` is only recognised in the file preamble.
+If it appears in a section preamble (after the first `###`) it has no meaning there — it is treated as just another unrecognised directive, so it too is preserved verbatim by `format` but is not acted upon.
 
 NOTE: If you have seen `{{$uuid}}` or `{{$timestamp}}` in a request file and are looking for where those are documented, see <<dynamic-variables>> below.
 They are built-in generated values, not directives.
@@ -25,6 +28,10 @@ For the request file format that these directives live inside see xref:http-file
 | `# @env <name>`
 | File preamble
 | Selects the default environment from the env files.
+
+| `# @name <name>`
+| Section preamble
+| Sets an explicit request name, taking precedence over the `### text` separator for `--name` matching and `list` output.
 
 | `# @timeout <ms>`
 | Section preamble
@@ -180,6 +187,42 @@ Multiple directives may be stacked on the same request:
 # @expect-status 201
 POST {{host}}/api/upload
 ----
+
+=== `# @name`
+
+Declares an explicit name for the request, independent of the `### text` on the separator line.
+It takes precedence over the `### text` for the resolved display name used by `list` output and `--name` matching, though `--name` still also matches the `### text`, so either form remains usable for selection.
+
+[source,asciidoc]
+----
+### Create a user
+# @name createUser
+----
+
+[cols="1,3",options="header"]
+|===
+| Detail | Value
+
+| Syntax
+| `# @name <name>`
+
+| Where
+| Section preamble (between the `###` separator and the request line)
+
+| Matching
+| Case-insensitive, trimmed; `--name` matches either `# @name` or the `### text`
+
+| Precedence
+| `# @name` wins over `### text` for `list` output and the resolved display name
+
+| Repeatable
+| No — a second `# @name` in the same section preamble is an error
+|===
+
+*Validation errors:*
+
+* `@name requires a request name` — the directive appears with no value.
+* `@name is declared more than once (second value: '<name>')` — the directive appears more than once in the same section preamble.
 
 === `# @timeout`
 

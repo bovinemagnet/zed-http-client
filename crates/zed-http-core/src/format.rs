@@ -85,7 +85,8 @@ pub fn format_request_file_checked(file: &RequestFile) -> Result<String, HttpCli
                 .unwrap_or_else(|| original.url.clone());
             return Err(HttpClientError::Message(format!(
                 "request '{label}' cannot be written to a .http file without changing meaning — \
-                 its body contains a line starting with '###', '>>', or '< '"
+                 a directive or a body line reads back as something else \
+                 (a line starting with '###', '>>', or '< ', or a directive spanning two lines)"
             )));
         }
     }
@@ -106,6 +107,8 @@ fn same_request(original: &RequestBlock, actual: &RequestBlock) -> bool {
 
     names_match
         && headers_match
+        && original.name_directive == actual.name_directive
+        && original.unknown_directives == actual.unknown_directives
         && original.method == actual.method
         && original.url == actual.url
         && normalise_body(original.body.as_ref()) == normalise_body(actual.body.as_ref())
@@ -141,6 +144,22 @@ fn sanitise_name(name: &str) -> Option<String> {
     }
 }
 
+/// A directive occupies one comment line, so a newline inside it would end the
+/// comment and let the remainder parse as a request line. Flatten it, the way
+/// [`sanitise_name`] flattens a name.
+fn sanitise_directive(directive: &str) -> Option<String> {
+    let single_line: String = directive
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let trimmed = single_line.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 fn format_request(output: &mut String, request: &RequestBlock) {
     output.push_str("###");
     if let Some(name) = request.name.as_deref().and_then(sanitise_name) {
@@ -149,9 +168,21 @@ fn format_request(output: &mut String, request: &RequestBlock) {
     }
     output.push('\n');
 
+    if let Some(directive_name) = request
+        .name_directive
+        .as_deref()
+        .and_then(sanitise_directive)
+    {
+        output.push_str(&format!("# @name {directive_name}\n"));
+    }
     format_options(output, &request.options);
     format_assertions(output, &request.assertions);
     format_captures(output, &request.captures);
+    for directive in &request.unknown_directives {
+        if let Some(directive) = sanitise_directive(directive) {
+            output.push_str(&format!("# {directive}\n"));
+        }
+    }
 
     output.push_str(&format!("{} {}\n", request.method.as_str(), request.url));
 
@@ -283,6 +314,47 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_the_name_directive_without_losing_the_separator_text() {
+        let input = "### Create a user\n# @name createUser\nPOST https://example.com/users\n";
+        let parsed = parse_request_file(input).unwrap();
+
+        let formatted = format_request_file(&parsed);
+
+        assert_eq!(formatted, input);
+        assert_eq!(parse_request_file(&formatted).unwrap(), parsed);
+    }
+
+    #[test]
+    fn round_trips_unknown_directives() {
+        let input = "### Req\n# @no-cookie-jar\n# @future-thing 42\nGET https://example.com\n";
+        let parsed = parse_request_file(input).unwrap();
+
+        let formatted = format_request_file(&parsed);
+
+        assert!(formatted.contains("# @no-cookie-jar\n"));
+        assert!(formatted.contains("# @future-thing 42\n"));
+        assert_eq!(parse_request_file(&formatted).unwrap(), parsed);
+    }
+
+    #[test]
+    fn formatting_is_idempotent_for_directive_heavy_requests() {
+        let input = "### Login\n# @name login\n# @timeout 500\n# @no-cookie-jar\n# @capture token json:/token\nPOST https://example.com/login\n";
+        let once = format_request_file(&parse_request_file(input).unwrap());
+        let twice = format_request_file(&parse_request_file(&once).unwrap());
+
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn checked_rejects_an_unknown_directive_that_smuggles_in_a_newline() {
+        let mut file = block("Sneaky", None);
+        file.requests[0].unknown_directives =
+            vec!["@thing\nGET https://evil.example.com/injected".to_string()];
+
+        assert!(format_request_file_checked(&file).is_err());
+    }
+
+    #[test]
     fn emits_file_level_env_directive() {
         let input = "# @env dev\n@host = https://example.com\n\n### Ping\nGET {{host}}/ping\n";
         let parsed = parse_request_file(input).unwrap();
@@ -313,6 +385,7 @@ mod tests {
             variables: Vec::new(),
             requests: vec![RequestBlock {
                 name: Some(name.to_string()),
+                name_directive: None,
                 method: crate::model::RequestMethod::Post,
                 url: "https://example.com/real".to_string(),
                 headers: Vec::new(),
@@ -320,6 +393,7 @@ mod tests {
                 options: RequestOptions::default(),
                 assertions: Vec::new(),
                 captures: Vec::new(),
+                unknown_directives: Vec::new(),
                 response_redirect: None,
                 range: crate::model::SourceRange {
                     start_line: 0,

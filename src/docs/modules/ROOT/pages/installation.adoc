@@ -81,7 +81,7 @@ The archives are produced by the project's release workflow (`.github/workflows/
 
 === Install to `~/.cargo/bin`
 
-NOTE: Building from source requires Rust 1.74 or newer (the minimum supported Rust version, driven by the `clap` 4 dependency).
+NOTE: Building from source requires Rust 1.88 or newer (the minimum supported Rust version, driven by the transitive `time-core` and `time-macros` dependencies, which declare `rust-version = 1.88`).
 
 [source,bash]
 ----

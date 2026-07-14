@@ -58,8 +58,11 @@ pub fn parse_request_file(input: &str) -> Result<RequestFile, HttpClientError> {
 
     let mut requests = Vec::new();
     let mut variables = Vec::new();
-    for (name, section_lines) in sections {
-        let section = parse_section(section_lines, name)?;
+    for (index, (name, section_lines)) in sections.into_iter().enumerate() {
+        // `# @env` belongs to the file, and `parse_default_env` has already
+        // taken it from the preamble. Elsewhere it means nothing to us, so it
+        // is preserved verbatim rather than dropped.
+        let section = parse_section(section_lines, name, index == 0)?;
         variables.extend(section.variables);
         if let Some(request) = section.block {
             requests.push(request);
@@ -106,14 +109,15 @@ pub fn select_request_by_line(file: &RequestFile, line: usize) -> Option<&Reques
         .find(|request| request.range.start_line <= line && line <= request.range.end_line)
 }
 
+/// Match either name a block can carry: its `### separator` text or its
+/// `# @name` directive. Both read as "the name of this request" to a user.
 pub fn select_request_by_name<'a>(file: &'a RequestFile, name: &str) -> Option<&'a RequestBlock> {
     let needle = name.trim();
     file.requests.iter().find(|request| {
-        request
-            .name
-            .as_deref()
-            .map(|candidate| candidate.eq_ignore_ascii_case(needle))
-            .unwrap_or(false)
+        [request.name_directive.as_deref(), request.name.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|candidate| candidate.eq_ignore_ascii_case(needle))
     })
 }
 
@@ -147,14 +151,28 @@ struct ParsedSection {
     variables: Vec<InPlaceVariable>,
 }
 
+/// Everything the `# @...` lines ahead of a request line contribute to it.
+#[derive(Default)]
+struct SectionDirectives {
+    options: RequestOptions,
+    assertions: Vec<ResponseAssertion>,
+    captures: Vec<CaptureDirective>,
+    name: Option<String>,
+    unknown: Vec<String>,
+    /// The region before the first `###`, whose `# @env` the file already took.
+    is_preamble: bool,
+}
+
 fn parse_section(
     lines: &[NumberedLine<'_>],
     name: Option<String>,
+    is_preamble: bool,
 ) -> Result<ParsedSection, HttpClientError> {
     let mut cursor = 0usize;
-    let mut options = RequestOptions::default();
-    let mut assertions: Vec<ResponseAssertion> = Vec::new();
-    let mut captures: Vec<CaptureDirective> = Vec::new();
+    let mut directives = SectionDirectives {
+        is_preamble,
+        ..SectionDirectives::default()
+    };
     let mut variables: Vec<InPlaceVariable> = Vec::new();
     while cursor < lines.len() {
         let (line_no, line) = lines[cursor];
@@ -164,13 +182,7 @@ fn parse_section(
             continue;
         }
         if let Some(directive) = parse_option_directive(line) {
-            apply_directive(
-                &mut options,
-                &mut assertions,
-                &mut captures,
-                &directive,
-                line_no,
-            )?;
+            apply_directive(&mut directives, &directive, line_no)?;
             cursor += 1;
             continue;
         }
@@ -244,13 +256,15 @@ fn parse_section(
     Ok(ParsedSection {
         block: Some(RequestBlock {
             name,
+            name_directive: directives.name,
             method,
             url,
             headers,
             body,
-            options,
-            assertions,
-            captures,
+            options: directives.options,
+            assertions: directives.assertions,
+            captures: directives.captures,
+            unknown_directives: directives.unknown,
             response_redirect,
             range: SourceRange {
                 start_line: request_line_no,
@@ -285,6 +299,9 @@ fn is_http_version(token: &str) -> bool {
 struct OptionDirective {
     name: String,
     value: Option<String>,
+    /// The directive as written, from the `@` onwards, so an unrecognised one
+    /// can be re-emitted with its original spelling.
+    raw: String,
 }
 
 fn parse_option_directive(line: &str) -> Option<OptionDirective> {
@@ -305,6 +322,11 @@ fn parse_option_directive(line: &str) -> Option<OptionDirective> {
     if name.is_empty() {
         return None;
     }
+    let raw = if rest.is_empty() {
+        format!("@{name}")
+    } else {
+        format!("@{name} {rest}")
+    };
     Some(OptionDirective {
         name: name.to_ascii_lowercase(),
         value: if rest.is_empty() {
@@ -312,17 +334,39 @@ fn parse_option_directive(line: &str) -> Option<OptionDirective> {
         } else {
             Some(rest.to_string())
         },
+        raw,
     })
 }
 
 fn apply_directive(
-    options: &mut RequestOptions,
-    assertions: &mut Vec<ResponseAssertion>,
-    captures: &mut Vec<CaptureDirective>,
+    section: &mut SectionDirectives,
     directive: &OptionDirective,
     line: usize,
 ) -> Result<(), HttpClientError> {
+    let options = &mut section.options;
+    let assertions = &mut section.assertions;
+    let captures = &mut section.captures;
     match directive.name.as_str() {
+        "name" => {
+            let value =
+                directive
+                    .value
+                    .as_deref()
+                    .ok_or_else(|| HttpClientError::InvalidOption {
+                        line,
+                        content: "@name requires a request name".to_string(),
+                    })?;
+            if section.name.is_some() {
+                return Err(HttpClientError::InvalidOption {
+                    line,
+                    content: format!("@name is declared more than once (second value: '{value}')"),
+                });
+            }
+            section.name = Some(value.trim().to_string());
+        }
+        // Already consumed by `parse_default_env`; anywhere else it is inert
+        // text we must not lose, so fall through to the unknown branch.
+        "env" if section.is_preamble => {}
         "no-redirect" => {
             options.no_redirect = true;
         }
@@ -442,7 +486,10 @@ fn apply_directive(
             });
         }
         _ => {
-            // Unknown directives are ignored, mirroring JetBrains' forward-compatible behaviour.
+            // Unknown directives have no effect here, mirroring JetBrains'
+            // forward-compatible behaviour — but they are kept verbatim so the
+            // formatter rewrites the file without deleting them.
+            section.unknown.push(directive.raw.clone());
         }
     }
     Ok(())
@@ -519,12 +566,10 @@ fn split_off_response_redirect<'a>(
 
 fn parse_response_redirect(line: &str) -> Option<ResponseRedirect> {
     let trimmed = line.trim_start();
-    let (rest, force) = if let Some(rest) = trimmed.strip_prefix(">>!") {
-        (rest, true)
-    } else if let Some(rest) = trimmed.strip_prefix(">>") {
-        (rest, false)
-    } else {
-        return None;
+    // `>>` is a prefix of `>>!`, so the forcing form must be tested first.
+    let (rest, force) = match trimmed.strip_prefix(">>!") {
+        Some(rest) => (rest, true),
+        None => (trimmed.strip_prefix(">>")?, false),
     };
     let path = rest.trim();
     if path.is_empty() {
@@ -778,6 +823,92 @@ Content-Type: application/json
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn name_directive_names_the_request() {
+        let input = "###\n# @name login\nPOST https://example.com/login\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.requests[0].resolved_name(), Some("login"));
+        assert_eq!(
+            select_request_by_name(&file, "LOGIN").unwrap().url,
+            "https://example.com/login"
+        );
+    }
+
+    #[test]
+    fn name_directive_wins_over_the_separator_text_but_both_select() {
+        let input = "### Create a user\n# @name createUser\nPOST https://example.com/users\n";
+        let file = parse_request_file(input).unwrap();
+
+        let request = &file.requests[0];
+        assert_eq!(request.resolved_name(), Some("createUser"));
+        assert_eq!(request.name.as_deref(), Some("Create a user"));
+        assert!(select_request_by_name(&file, "createUser").is_some());
+        assert!(select_request_by_name(&file, "Create a user").is_some());
+    }
+
+    #[test]
+    fn name_directive_without_a_value_errors() {
+        let input = "### Bad\n# @name\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, content } => {
+                assert_eq!(line, 2);
+                assert!(content.contains("@name requires"));
+            }
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_name_directive_errors() {
+        let input = "### Bad\n# @name one\n# @name two\nGET https://example.com\n";
+        let err = parse_request_file(input).unwrap_err();
+        match err {
+            HttpClientError::InvalidOption { line, content } => {
+                assert_eq!(line, 3);
+                assert!(content.contains("more than once"));
+            }
+            other => panic!("expected InvalidOption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_directives_are_kept_verbatim_on_the_block() {
+        let input = "### Req\n# @no-cookie-jar\n// @No-Log yes please\nGET https://example.com\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(
+            file.requests[0].unknown_directives,
+            vec![
+                "@no-cookie-jar".to_string(),
+                "@No-Log yes please".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn the_preamble_env_directive_is_not_kept_as_an_unknown_directive() {
+        // `# @env dev` is consumed at file level, so a bare first request must
+        // not also carry it as an unrecognised directive (it would be emitted
+        // twice by the formatter).
+        let input = "# @env dev\nGET https://example.com\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.default_env.as_deref(), Some("dev"));
+        assert!(file.requests[0].unknown_directives.is_empty());
+    }
+
+    #[test]
+    fn an_env_directive_outside_the_preamble_is_kept_as_an_unknown_directive() {
+        let input = "### One\nGET https://example.com/one\n\n### Two\n# @env prod\nGET https://example.com/two\n";
+        let file = parse_request_file(input).unwrap();
+
+        assert_eq!(file.default_env, None);
+        assert!(file.requests[0].unknown_directives.is_empty());
+        assert_eq!(file.requests[1].unknown_directives, vec!["@env prod"]);
     }
 
     #[test]

@@ -266,6 +266,7 @@ fn build_request_block(
 
     Ok(RequestBlock {
         name,
+        name_directive: None,
         method: inferred_method,
         url,
         headers,
@@ -273,6 +274,7 @@ fn build_request_block(
         options: Default::default(),
         assertions: Vec::new(),
         captures: Vec::new(),
+        unknown_directives: Vec::new(),
         response_redirect: None,
         range: SourceRange {
             start_line: 0,
