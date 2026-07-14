@@ -566,12 +566,10 @@ fn split_off_response_redirect<'a>(
 
 fn parse_response_redirect(line: &str) -> Option<ResponseRedirect> {
     let trimmed = line.trim_start();
-    let (rest, force) = if let Some(rest) = trimmed.strip_prefix(">>!") {
-        (rest, true)
-    } else if let Some(rest) = trimmed.strip_prefix(">>") {
-        (rest, false)
-    } else {
-        return None;
+    // `>>` is a prefix of `>>!`, so the forcing form must be tested first.
+    let (rest, force) = match trimmed.strip_prefix(">>!") {
+        Some(rest) => (rest, true),
+        None => (trimmed.strip_prefix(">>")?, false),
     };
     let path = rest.trim();
     if path.is_empty() {
