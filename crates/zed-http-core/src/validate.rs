@@ -50,7 +50,7 @@ where
         for message in validate_request_messages(request, schema.as_ref()) {
             issues.push(ValidationIssue {
                 request_index: idx,
-                request_name: request.name.clone(),
+                request_name: request.resolved_name().map(str::to_string),
                 line: request.range.start_line,
                 message,
             });
@@ -71,7 +71,7 @@ pub fn validate_request_with_schema(
         .into_iter()
         .map(|message| ValidationIssue {
             request_index: 0,
-            request_name: request.name.clone(),
+            request_name: request.resolved_name().map(str::to_string),
             line: request.range.start_line,
             message,
         })

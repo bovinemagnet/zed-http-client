@@ -86,6 +86,7 @@ fn build_request_block(request: &Value, name: &str) -> Option<RequestBlock> {
     let body = extract_body(request, is_graphql);
     Some(RequestBlock {
         name: Some(name.to_string()),
+        name_directive: None,
         method,
         url,
         headers,
@@ -93,6 +94,7 @@ fn build_request_block(request: &Value, name: &str) -> Option<RequestBlock> {
         options: RequestOptions::default(),
         assertions: Vec::new(),
         captures: Vec::new(),
+        unknown_directives: Vec::new(),
         response_redirect: None,
         range: SourceRange {
             start_line: 0,

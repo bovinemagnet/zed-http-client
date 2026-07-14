@@ -379,7 +379,7 @@ fn list_command(file: &Path) -> Result<()> {
         .with_context(|| format!("failed to parse {}", file.display()))?;
 
     for (index, request) in request_file.requests.iter().enumerate() {
-        let name = request.name.as_deref().unwrap_or("Unnamed request");
+        let name = request.resolved_name().unwrap_or("Unnamed request");
         println!(
             "{}. {:<18} {:<8} line {}",
             index + 1,
@@ -1128,8 +1128,8 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
 
     for (idx, request) in parsed.requests.iter().enumerate() {
         let name = request
-            .name
-            .clone()
+            .resolved_name()
+            .map(str::to_string)
             .unwrap_or_else(|| format!("Unnamed request at line {}", request.range.start_line));
 
         let resolved = match prepare_request_with_extras(

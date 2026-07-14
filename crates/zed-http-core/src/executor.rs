@@ -178,6 +178,8 @@ pub fn prepare_request_with_extras(
         headers = merged_headers;
     }
 
+    let name = request.resolved_name().map(str::to_string);
+
     let response_redirect = match request.response_redirect {
         Some(ResponseRedirect {
             path,
@@ -190,7 +192,7 @@ pub fn prepare_request_with_extras(
     };
 
     Ok(ResolvedRequest {
-        name: request.name,
+        name,
         method: request.method.clone(),
         http_method: request.method.http_method().to_string(),
         url,

@@ -28,7 +28,12 @@ pub struct InPlaceVariable {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestBlock {
+    /// The text of the `### name` separator that opened this block.
     pub name: Option<String>,
+    /// The value of IntelliJ's `# @name` directive, when the block carries one.
+    /// It names the request in preference to [`RequestBlock::name`].
+    #[serde(default)]
+    pub name_directive: Option<String>,
     pub method: RequestMethod,
     pub url: String,
     pub headers: Vec<Header>,
@@ -38,8 +43,21 @@ pub struct RequestBlock {
     pub assertions: Vec<ResponseAssertion>,
     #[serde(default)]
     pub captures: Vec<CaptureDirective>,
+    /// `# @...` directives this version of the parser does not understand,
+    /// kept verbatim (leading `@` included, comment marker stripped) so the
+    /// formatter can put them back rather than delete them.
+    #[serde(default)]
+    pub unknown_directives: Vec<String>,
     pub response_redirect: Option<ResponseRedirect>,
     pub range: SourceRange,
+}
+
+impl RequestBlock {
+    /// The name callers select this request by: `# @name` if present, else the
+    /// `###` separator text.
+    pub fn resolved_name(&self) -> Option<&str> {
+        self.name_directive.as_deref().or(self.name.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
