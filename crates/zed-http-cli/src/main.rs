@@ -1598,9 +1598,12 @@ mod tests {
             "secret leaked into the send error:\n{rendered}"
         );
         // Redacting must not cost the user their diagnosis: the underlying
-        // cause is the whole value of the message.
+        // cause is the whole value of the message. Assert on `os error`, which
+        // both platforms emit (111 on Linux, 10061 on Windows) — the refusal
+        // is worded differently on each, and reqwest's own Display stops at the
+        // URL, so this is present only if the source chain survived.
         assert!(
-            rendered.to_lowercase().contains("connection refused"),
+            rendered.contains("os error"),
             "redaction swallowed the underlying cause:\n{rendered}"
         );
     }
