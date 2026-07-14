@@ -12,11 +12,11 @@ This is a Rust Cargo workspace for a Zed HTTP Client extension and companion CLI
 - `cargo test --workspace --locked`: run the full test suite.
 - `cargo fmt --all -- --check`: verify Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: run lints with CI-equivalent strictness.
-- `cargo check --workspace --locked`: quick compile check; use Rust `1.74` when validating MSRV.
+- `cargo check --workspace --locked`: quick compile check; use Rust `1.88` when validating MSRV.
 
 ## Coding Style & Naming Conventions
 
-Use Rust 2021 and preserve the declared MSRV of `1.74`. Format with `rustfmt`; do not hand-align code in ways `cargo fmt` will undo. Keep the CLI thin and place reusable behavior in `zed-http-core`. Update the module map in `crates/zed-http-core/src/lib.rs` when adding or renaming core modules. Use descriptive snake_case for Rust functions, modules, and tests. Keep crate versions and `extension.toml` version in sync for releases.
+Use Rust 2021 and preserve the declared MSRV of `1.88`. Format with `rustfmt`; do not hand-align code in ways `cargo fmt` will undo. Keep the CLI thin and place reusable behavior in `zed-http-core`. Update the module map in `crates/zed-http-core/src/lib.rs` when adding or renaming core modules. Use descriptive snake_case for Rust functions, modules, and tests. Keep crate versions and `extension.toml` version in sync for releases.
 
 ## Testing Guidelines
 

@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directive is parsed, wins over the `### separator` text when both are present,
   and shows up in `list` output. `run --name` matches either spelling.
 
+### Changed
+
+- **MSRV raised from 1.74 to 1.88.** The declared 1.74 had not been buildable
+  for some months: transitive dependencies (`time-core`, `time-macros`) now
+  declare `rust-version = 1.88`, and the committed `Cargo.lock` is v4, which
+  cargo 1.74 cannot even parse. The `MSRV` CI job had been failing accordingly.
+  1.88 is the verified floor — `cargo +1.88 check --workspace --locked` passes,
+  1.85 does not.
+
 ### Fixed
 
 - **`format` no longer deletes `# @name` and unknown directives.** Any

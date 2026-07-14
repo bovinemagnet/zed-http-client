@@ -77,17 +77,17 @@ jobs:
       - run: npx -y antora@3.1.12 --fetch --log-failure-level=warn antora-playbook.yml
 
   msrv:
-    name: MSRV 1.74
+    name: MSRV 1.88
     runs-on: ubuntu-latest
     # Verify the crates still compile on the rust-version declared in
     # Cargo.toml. Lints are enforced by the `lints` job on stable; here we
     # only care about buildability, so clear -Dwarnings to avoid failing on
-    # a benign lint that differs between 1.74 and stable.
+    # a benign lint that differs between 1.88 and stable.
     env:
       RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.74
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv

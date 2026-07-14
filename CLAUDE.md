@@ -80,7 +80,7 @@ Secret masking (`env::mask_variables`) is a pure presentation concern used only 
 
 ## Conventions
 
-- Workspace edition is `2021`; MSRV is `1.74` (declared via `rust-version` in each crate and verified by the `MSRV 1.74` CI job, which runs `cargo check --workspace --locked`). The two crate versions move in lockstep with the extension version in `extension.toml` — bump them together. `Cargo.lock` is committed and CI tests run `--locked`.
+- Workspace edition is `2021`; MSRV is `1.88` (declared via `rust-version` in each crate and verified by the `MSRV 1.88` CI job, which runs `cargo check --workspace --locked`). The floor is dependency-driven — `time-core` / `time-macros` declare `rust-version = 1.88` — so raise it only when a dependency forces it, and re-verify with `cargo +<version> check --workspace --locked`. The two crate versions move in lockstep with the extension version in `extension.toml` — bump them together. `Cargo.lock` is committed and CI tests run `--locked`.
 - Process exit codes are load-bearing for CI: **2** = response assertion failed or a `run-all` request returned non-2xx (`TestFailure`), **3** = pre-flight validation rejected the file before sending (`ValidationFailure`), **1** = everything else. See `exit_code_for` in `main.rs`.
 - Tests use `std::env::temp_dir().join(format!("...{nanos}"))` for isolation rather than the `tempfile` crate — follow that pattern when adding fixtures that touch the filesystem.
 - Line numbers throughout the parser and selectors are **1-based** (matching `$ZED_ROW`); ranges are inclusive on both ends.

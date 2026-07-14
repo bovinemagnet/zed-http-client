@@ -74,7 +74,7 @@ toc::[]
 Install the CLI in one of three ways:
 
 * *Prebuilt binary* (no Rust toolchain needed): download the archive for your platform from the link:{project-repo}/releases[GitHub Releases page] — `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, or `windows-x86_64`. Extract and put `zed-http` on your `PATH`.
-* *From source*: `cargo install --path crates/zed-http-cli` (lands in `~/.cargo/bin/`; requires Rust 1.74+).
+* *From source*: `cargo install --path crates/zed-http-cli` (lands in `~/.cargo/bin/`; requires Rust 1.88+).
 * *In-tree*: the project-local `.zed/tasks.json` invokes `cargo run -p zed-http-cli` so no install is needed if you only use it from Zed.
 
 Build the CLI directly:
