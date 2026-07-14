@@ -67,7 +67,10 @@ pub use assertion::{evaluate_assertions, AssertionFailure, AssertionResponse};
 pub use capture::{evaluate_captures, CaptureOutcome, CaptureWarning};
 pub use curl::import_curl;
 pub use dynamic::build_dynamic_variables;
-pub use env::{list_environments, load_environment, mask_variables, VariableMap};
+pub use env::{
+    is_sensitive_key, list_environments, load_environment, mask_value, mask_variables,
+    redact_secrets, VariableMap,
+};
 pub use error::HttpClientError;
 pub use executor::{
     parse_and_select_request, prepare_request, prepare_request_with_extras, RequestSelector,

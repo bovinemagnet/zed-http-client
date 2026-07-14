@@ -70,21 +70,64 @@ pub fn list_environments(
     Ok(envs)
 }
 
-pub fn mask_value(key: &str, value: &str) -> String {
+/// Does this variable or header name look like it holds a secret?
+///
+/// Substring match on a lower-cased name, so `X-API-Key` and `refresh_token`
+/// are both caught. The dashed spellings are listed explicitly: a dash defeats
+/// both the `apikey` and `api_key` needles.
+pub fn is_sensitive_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    let sensitive = [
+    [
         "token",
         "secret",
         "password",
+        "passwd",
+        "pwd",
         "apikey",
         "api_key",
+        "api-key",
         "authorization",
-    ];
-    if sensitive.iter().any(|needle| lower.contains(needle)) && !value.is_empty() {
+        "credential",
+        "bearer",
+        "session",
+        "jwt",
+        "private_key",
+        "private-key",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+pub fn mask_value(key: &str, value: &str) -> String {
+    if is_sensitive_key(key) && !value.is_empty() {
         "***".to_string()
     } else {
         value.to_string()
     }
+}
+
+/// Replace the *values* of secret-looking variables wherever they appear in
+/// `text`.
+///
+/// Masking the variables table alone is theatre: a secret exists to be
+/// interpolated, so it reappears in clear in the URL, a header, or the body.
+/// This redacts the value itself, so `--verbose` output is safe to paste into
+/// a bug report.
+pub fn redact_secrets(text: &str, values: &VariableMap) -> String {
+    // Longest first: if one secret is a substring of another, redacting the
+    // short one first would leave a fragment of the long one behind.
+    let mut secrets: Vec<&str> = values
+        .iter()
+        .filter(|(key, value)| is_sensitive_key(key) && !value.is_empty())
+        .map(|(_, value)| value.as_str())
+        .collect();
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+
+    let mut redacted = text.to_string();
+    for secret in secrets {
+        redacted = redacted.replace(secret, "***");
+    }
+    redacted
 }
 
 pub fn mask_variables(values: &VariableMap) -> VariableMap {
@@ -164,6 +207,85 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn masks_the_dashed_api_key_spellings() {
+        // The dash defeats both the `apikey` and `api_key` needles, so these
+        // very common header spellings leaked in full.
+        assert_eq!(mask_value("api-key", "hunter2"), "***");
+        assert_eq!(mask_value("X-API-Key", "hunter2"), "***");
+    }
+
+    #[test]
+    fn masks_the_other_common_secret_spellings() {
+        for key in [
+            "passwd",
+            "credential",
+            "session",
+            "jwt",
+            "private-key",
+            "refresh_token",
+        ] {
+            assert_eq!(mask_value(key, "hunter2"), "***", "{key} should be masked");
+        }
+    }
+
+    #[test]
+    fn leaves_a_non_secret_key_alone() {
+        assert_eq!(mask_value("host", "example.com"), "example.com");
+        assert_eq!(mask_value("user_id", "42"), "42");
+    }
+
+    #[test]
+    fn an_empty_secret_is_not_masked_into_stars() {
+        // Masking "" to *** would imply a value exists where none does.
+        assert_eq!(mask_value("token", ""), "");
+    }
+
+    #[test]
+    fn redacts_a_secret_value_wherever_it_appears_in_text() {
+        // The whole point of #13: the variables table said `token = ***`, then
+        // the interpolated header printed the secret in clear.
+        let mut vars = VariableMap::new();
+        vars.insert("token".to_string(), "s3cr3t".to_string());
+        vars.insert("host".to_string(), "example.com".to_string());
+
+        let redacted = redact_secrets("Authorization: Bearer s3cr3t", &vars);
+
+        assert_eq!(redacted, "Authorization: Bearer ***");
+    }
+
+    #[test]
+    fn redacting_leaves_non_secret_values_intact() {
+        let mut vars = VariableMap::new();
+        vars.insert("host".to_string(), "example.com".to_string());
+
+        assert_eq!(
+            redact_secrets("https://example.com/api", &vars),
+            "https://example.com/api"
+        );
+    }
+
+    #[test]
+    fn redacts_every_occurrence_and_every_secret() {
+        let mut vars = VariableMap::new();
+        vars.insert("token".to_string(), "aaa".to_string());
+        vars.insert("password".to_string(), "bbb".to_string());
+
+        let redacted = redact_secrets("aaa bbb aaa", &vars);
+
+        assert_eq!(redacted, "*** *** ***");
+    }
+
+    #[test]
+    fn redacting_ignores_an_empty_secret_value() {
+        // An empty value would otherwise match at every character boundary and
+        // shatter the text into `***` between every char.
+        let mut vars = VariableMap::new();
+        vars.insert("token".to_string(), String::new().to_string());
+
+        assert_eq!(redact_secrets("nothing to hide", &vars), "nothing to hide");
+    }
 
     fn temp_dir() -> PathBuf {
         let nanos = SystemTime::now()

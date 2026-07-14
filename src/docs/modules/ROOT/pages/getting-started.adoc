@@ -49,7 +49,7 @@ Assertions: all passed
 [TIP]
 ====
 Pass `--output json` to get machine-readable output suitable for CI pipelines.
-Pass `--verbose` to print the fully resolved request (with secret-looking header values masked) before execution.
+Pass `--verbose` to print the fully resolved request (with secret-looking values masked throughout — URL, headers, and body) before execution.
 ====
 
 == Step 3 — Add an environment file
@@ -100,7 +100,7 @@ The resolution order is: `--env` flag wins, then `# @env` directive, then no env
 
 [NOTE]
 ====
-Sensitive-looking keys (`token`, `secret`, `password`, `apikey`, `api_key`, `authorization`) are masked in `--verbose` output.
+Sensitive-looking keys (`token`, `secret`, `password`, `apikey`, `authorization`, and related spellings — see xref:captures.adoc#secret-masking[Secret masking] for the full list) are masked in `--verbose` output, wherever the secret value appears — not just in a variables table.
 Store actual secrets in `http-client.private.env.json`, which overlays the public file and should be added to `.gitignore`.
 ====
 

@@ -237,11 +237,28 @@ Capture values whose *key* contains any of the following substrings (case-insens
 * `token`
 * `secret`
 * `password`
+* `passwd`
+* `pwd`
 * `apikey`
 * `api_key`
+* `api-key`
 * `authorization`
+* `bearer`
+* `credential`
+* `session`
+* `jwt`
+* `private_key`
+* `private-key`
+
+Dashed and underscored spellings are both listed deliberately: a dash defeats an undashed needle, so a header like `X-API-Key` needs `api-key` as well as `api_key` to be caught.
 
 The masking applies to the terminal summary line (`captured token = ***`) and to the `captured` map in `--output json`.
+
+Masking is not limited to the captures/variables table.
+Secret *values* are also redacted wherever they appear in `--verbose` output — in the resolved URL (including query strings), in header values, and in the request body — not only where the underlying variable name is echoed back.
+Header values are additionally masked by header name, which catches a secret written literally into the `.http` file rather than carried by a variable.
+If sending fails, the resulting error message is redacted too, since a transport-level connection error can embed the full request URL.
+
 Wire requests still use the unmasked value — masking is purely a display safeguard.
 
 This uses the same matching heuristic as the env-file variable masking described in xref:environments.adoc[Environments and variables].

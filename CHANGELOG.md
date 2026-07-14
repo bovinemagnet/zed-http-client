@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.88 is the verified floor — `cargo +1.88 check --workspace --locked` passes,
   1.85 does not.
 
+### Security
+
+- **`--verbose` no longer leaks the secrets it claims to mask.** The variables
+  table printed `token = ***` and then printed the fully interpolated URL,
+  headers and body in clear, so `Authorization: Bearer <real-secret>` went to
+  the terminal and the Zed task log. Secret *values* are now redacted wherever
+  they appear — URL, headers, body — and header values are additionally masked
+  by header name, which catches a secret written literally into the `.http`
+  file. The transport-error path is redacted too: `reqwest`'s connection-error
+  message embeds the full URL, so a failed send leaked a secret query parameter
+  even without `--verbose`. Redaction preserves the underlying cause, so
+  "Connection refused" survives.
+- **The sensitive-key list no longer misses `api-key`.** A dash defeated both
+  the `apikey` and `api_key` needles, so `X-API-Key` was printed in full. Added
+  the dashed spellings plus `passwd`, `pwd`, `bearer`, `credential`, `session`,
+  `jwt` and `private-key`. Masking remains display-only — the wire request
+  always carries the real value.
+
 ### Fixed
 
 - **`format` no longer deletes `# @name` and unknown directives.** Any
