@@ -208,9 +208,18 @@ To avoid leaking secrets in terminal output or CI logs, values are masked with `
 * `token`
 * `secret`
 * `password`
+* `passwd`
+* `pwd`
 * `apikey`
 * `api_key`
+* `api-key`
 * `authorization`
+* `bearer`
+* `credential`
+* `session`
+* `jwt`
+* `private_key`
+* `private-key`
 
 [source,asciidoc]
 ----
@@ -221,9 +230,13 @@ Resolved variables:
   X-Request-Id  = req-12345
 ----
 
+Masking is not limited to this variables table: the resolved URL (including query strings), header values, and the request body are scanned too, so a secret value is redacted everywhere it appears — not only where its variable name is echoed back.
+Header values are additionally masked by header name, so a secret written literally into a request (rather than carried by a variable) is still caught.
+If sending fails, the resulting error message is redacted as well, since a connection-error message can embed the full request URL.
+
 IMPORTANT: This is a display-only safeguard.
 The wire request is *not* masked — the real value is sent to the server.
-Masking only affects what `--verbose` prints to your terminal.
+Masking only affects what `--verbose` prints to your terminal, and the error message shown after a failed send.
 
 For genuine secret management, keep real values in `http-client.private.env.json` and add that filename to `.gitignore`.
 Never commit real credentials to the public env file.

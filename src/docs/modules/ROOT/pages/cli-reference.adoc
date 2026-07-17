@@ -119,7 +119,7 @@ See xref:assertions.adoc[Response assertions] and xref:cookies.adoc[Persistent c
 
 |`--verbose`
 |flag
-|Before sending, print the resolved method, URL, headers, variables (secrets masked), and body.
+|Before sending, print the resolved method, URL, headers, variables, and body, with secret-looking values masked throughout — not only in the variables table.
 
 |`--no-validate`
 |flag

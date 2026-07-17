@@ -45,10 +45,11 @@ use zed_http_core::{
     build_preview, cookie_jar_path, decode_har_input, evaluate_assertions, evaluate_captures,
     format_pretty_response, format_request_file_checked, import_curl, import_har,
     import_postman_collection, introspection_payload, list_environments, load_cached_schema,
-    mask_variables, parse_request_file, prepare_request, prepare_request_with_extras,
-    response_root, save_response, schema_root, schema_slug, validate_request_file_with_schemas,
-    validate_request_with_schema, AssertionResponse, CaptureWarning, RequestMethod,
-    RequestSelector, ResolvedRequest, ResponseSummary, ValidationIssue,
+    mask_value, mask_variables, parse_request_file, prepare_request, prepare_request_with_extras,
+    redact_secrets, response_root, save_response, schema_root, schema_slug,
+    validate_request_file_with_schemas, validate_request_with_schema, AssertionResponse,
+    CaptureWarning, RequestMethod, RequestSelector, ResolvedRequest, ResponseSummary,
+    ValidationIssue,
 };
 
 #[derive(Debug, Parser)]
@@ -841,24 +842,57 @@ struct RunOptions<'a> {
 
 type VariableMap = indexmap::IndexMap<String, String>;
 
-fn mask_capture(name: &str, value: &str) -> String {
-    // Reuse the env-file masking heuristic so a captured `token` is shown
-    // as `***` in both terminal output and the JSON envelope. Wire-side
-    // requests still use the unmasked value.
-    let lower = name.to_ascii_lowercase();
-    let sensitive = [
-        "token",
-        "secret",
-        "password",
-        "apikey",
-        "api_key",
-        "authorization",
-    ];
-    if sensitive.iter().any(|needle| lower.contains(needle)) && !value.is_empty() {
-        "***".to_string()
-    } else {
-        value.to_string()
+/// Flatten a failed `send` into a single redacted error.
+///
+/// `reqwest`'s `Display` carries the full URL — secret query string and all —
+/// so the error cannot be allowed to escape verbatim. The source chain holds
+/// the part the user actually needs ("Connection refused"), so it is walked and
+/// appended rather than dropped: redacting a secret must not cost a diagnosis.
+fn redacted_send_error(error: reqwest::Error, variables: &VariableMap) -> anyhow::Error {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
     }
+    anyhow::anyhow!(redact_secrets(&message, variables))
+}
+
+/// Render the `--verbose` preamble with every secret redacted.
+///
+/// Two layers, because either alone leaks. Secret *values* are redacted
+/// wherever they appear (`redact_secrets`), since a secret exists precisely to
+/// be interpolated into the URL, a header or the body. Header *values* are
+/// additionally masked by header name (`mask_value`), which catches a secret
+/// written literally into the `.http` file rather than carried by a variable.
+fn render_verbose(resolved: &ResolvedRequest) -> String {
+    use std::fmt::Write;
+
+    let hide = |text: &str| redact_secrets(text, &resolved.variables);
+
+    let masked_variables = mask_variables(&resolved.variables);
+    let mut out = String::new();
+    let _ = writeln!(out, "Resolved request:");
+    let _ = writeln!(out, "  Method: {}", resolved.http_method);
+    let _ = writeln!(out, "  URL: {}", hide(&resolved.url));
+    if !masked_variables.is_empty() {
+        let _ = writeln!(out, "  Variables:");
+        for (key, value) in masked_variables {
+            let _ = writeln!(out, "    {key} = {value}");
+        }
+    }
+    if !resolved.headers.is_empty() {
+        let _ = writeln!(out, "  Headers:");
+        for (key, value) in &resolved.headers {
+            let _ = writeln!(out, "    {key}: {}", hide(&mask_value(key, value)));
+        }
+    }
+    if let Some(body) = &resolved.body {
+        let _ = writeln!(out, "  Body:\n{}", hide(body));
+    }
+    let _ = writeln!(out);
+    out
 }
 
 fn parse_var_overrides(pairs: &[String]) -> Result<VariableMap> {
@@ -925,29 +959,7 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
     }
 
     if verbose {
-        let masked_variables = mask_variables(&resolved.variables);
-        println!("Resolved request:");
-        println!("  Method: {}", resolved.http_method);
-        println!("  URL: {}", resolved.url);
-        if !masked_variables.is_empty() {
-            println!("  Variables:");
-            for (key, value) in masked_variables {
-                println!("    {key} = {value}");
-            }
-        }
-        if !resolved.headers.is_empty() {
-            println!("  Headers:");
-            for (key, value) in &resolved.headers {
-                println!("    {key}: {value}");
-            }
-        }
-        if let Some(body) = &resolved.body {
-            println!(
-                "  Body:
-{body}"
-            );
-        }
-        println!();
+        print!("{}", render_verbose(&resolved));
     }
 
     let cookie_jar_target = resolve_cookie_jar_target(file, worktree, cookie_jar, no_cookies);
@@ -972,7 +984,7 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
             if !outcome.captured.is_empty() {
                 println!("Captured:");
                 for (key, value) in &outcome.captured {
-                    println!("  {key} = {}", mask_capture(key, value));
+                    println!("  {key} = {}", mask_value(key, value));
                 }
             }
             for warning in &outcome.capture_warnings {
@@ -1016,7 +1028,7 @@ async fn run_command(opts: RunOptions<'_>) -> Result<()> {
                         .map(|f| json!({ "line": f.line, "message": f.message }))
                         .collect::<Vec<_>>(),
                     "captured": outcome.captured.iter()
-                        .map(|(k, v)| (k.clone(), serde_json::Value::String(mask_capture(k, v))))
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(mask_value(k, v))))
                         .collect::<serde_json::Map<_, _>>(),
                     "capture_warnings": outcome.capture_warnings
                         .iter()
@@ -1208,7 +1220,7 @@ async fn run_all_command(opts: RunAllOptions<'_>) -> Result<()> {
         let captured_for_entry: Vec<(String, String)> = outcome
             .captured
             .iter()
-            .map(|(k, v)| (k.clone(), mask_capture(k, v)))
+            .map(|(k, v)| (k.clone(), mask_value(k, v)))
             .collect();
         let capture_warnings_for_entry = outcome.capture_warnings.clone();
 
@@ -1374,7 +1386,13 @@ async fn execute_resolved_request(
     }
 
     let started = Instant::now();
-    let response = request.send().await?;
+    // reqwest's transport errors embed the full URL, so a secret in the query
+    // string reaches the terminal and the Zed task log on any connection
+    // failure — with or without --verbose. Redact before the error escapes.
+    let response = request
+        .send()
+        .await
+        .map_err(|error| redacted_send_error(error, &resolved.variables))?;
     let duration = started.elapsed();
     let status = response.status();
     let header_pairs: Vec<(String, String)> = response
@@ -1550,4 +1568,98 @@ fn write_response_redirect(
     fs::write(&target, body)
         .with_context(|| format!("failed to write response redirect to {}", target.display()))?;
     Ok(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zed_http_core::{RequestOptions, VariableMap};
+
+    /// Port 9 (discard) is closed on the loopback interface, so this fails to
+    /// connect immediately without touching the network.
+    #[tokio::test]
+    async fn a_failed_send_does_not_leak_the_secret_in_its_error() {
+        // reqwest's transport error embeds the full URL, which carries the
+        // secret in its query string — and this fires with or without
+        // --verbose, straight into the terminal and the Zed task log.
+        let mut resolved = resolved_with_secret();
+        resolved.url = "http://127.0.0.1:9/api?access=private-token".to_string();
+
+        let client = reqwest::Client::new();
+        let error =
+            match execute_resolved_request(&client, Path::new("req.http"), None, &resolved).await {
+                Err(error) => error,
+                Ok(_) => panic!("connecting to a closed port must fail"),
+            };
+
+        let rendered = format!("{error:#}");
+        assert!(
+            !rendered.contains("private-token"),
+            "secret leaked into the send error:\n{rendered}"
+        );
+        // Redacting must not cost the user their diagnosis: the underlying
+        // cause is the whole value of the message. Assert on `os error`, which
+        // both platforms emit (111 on Linux, 10061 on Windows) — the refusal
+        // is worded differently on each, and reqwest's own Display stops at the
+        // URL, so this is present only if the source chain survived.
+        assert!(
+            rendered.contains("os error"),
+            "redaction swallowed the underlying cause:\n{rendered}"
+        );
+    }
+
+    fn resolved_with_secret() -> ResolvedRequest {
+        let mut variables = VariableMap::new();
+        variables.insert("token".to_string(), "private-token".to_string());
+        variables.insert("host".to_string(), "example.com".to_string());
+
+        let mut headers = indexmap::IndexMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            "Bearer private-token".to_string(),
+        );
+
+        ResolvedRequest {
+            name: Some("Fetch".to_string()),
+            method: RequestMethod::Get,
+            http_method: "GET".to_string(),
+            url: "https://example.com/api?access=private-token".to_string(),
+            headers,
+            body: Some("{\"token\":\"private-token\"}".to_string()),
+            options: RequestOptions::default(),
+            assertions: Vec::new(),
+            captures: Vec::new(),
+            response_redirect: None,
+            variables,
+            range_start_line: 1,
+        }
+    }
+
+    #[test]
+    fn verbose_output_never_prints_a_secret_in_clear() {
+        // #13: the variables table said `token = ***`, then the interpolated
+        // header, URL and body printed the secret in clear three lines later.
+        let rendered = render_verbose(&resolved_with_secret());
+
+        assert!(
+            !rendered.contains("private-token"),
+            "secret leaked into --verbose output:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn verbose_output_still_shows_the_non_secret_parts() {
+        let rendered = render_verbose(&resolved_with_secret());
+
+        assert!(rendered.contains("GET"), "method missing:\n{rendered}");
+        assert!(
+            rendered.contains("example.com"),
+            "host should not be redacted:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Authorization"),
+            "header name should still be shown:\n{rendered}"
+        );
+        assert!(rendered.contains("***"), "no masking applied:\n{rendered}");
+    }
 }

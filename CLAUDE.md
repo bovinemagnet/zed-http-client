@@ -69,7 +69,7 @@ The GraphQL schema cache is keyed by scheme+host+port+path (`schema_slug`), so t
 
 Key types live in `model.rs`: `RequestFile`, `RequestBlock`, `RequestMethod` (note `GraphQl` is a *parser-level* method whose `http_method()` returns `"POST"`), `RequestBody`, `RequestOptions`, `ResponseRedirect`, `ResponseAssertion`, `CaptureDirective` / `CaptureSource`, `Header`, `InPlaceVariable`, `SourceRange`. All errors are funnelled through `HttpClientError` in `error.rs` and the CLI wraps them with the request file path via `anyhow::Context` before they reach the user.
 
-Secret masking (`env::mask_variables`) is a pure presentation concern used only by `--verbose` output; it lower-cases the key and matches any of `token`, `secret`, `password`, `apikey`, `api_key`, `authorization`.
+Secret masking (`env.rs`) is a pure presentation concern — the wire request always carries the real value. `is_sensitive_key` lower-cases a name and substring-matches a list (`token`, `secret`, `password`/`passwd`/`pwd`, `apikey`/`api_key`/`api-key`, `authorization`, `bearer`, `credential`, `session`, `jwt`, `private_key`/`private-key`); the dashed spellings are listed separately because a dash defeats the undashed needles. `mask_value` masks a value *by its key*, and `redact_secrets` masks secret *values* wherever they appear in a blob of text. Both are needed: masking the variables table alone is theatre, since a secret exists to be interpolated into the URL, a header, or the body. Anything that prints a resolved request (`--verbose`, and the transport-error path, whose `reqwest` message embeds the full URL) must go through `redact_secrets` first.
 
 ## Zed extension side
 
